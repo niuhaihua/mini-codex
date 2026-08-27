@@ -19,17 +19,12 @@ async function main(): Promise<void> {
    * 如果使用 OpenAI Compatible 中转站，
    * 修改成对应的 /v1 地址即可。
    */
-  // const model = new OpenAIModel({
-  //   apiKey: "",
-  //   baseURL:"",
-  //   model: "gpt-5.6-sol",
-  // });
 
-const model = new OpenAIModel({
+  const model = new OpenAIModel({
     apiKey: process.env.OPENAI_API_KEY ?? "",
     model: process.env.OPENAI_MODEL ?? "gpt-5",
     ...(process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : {}),
-});
+  });
   /**
    * =========================
    * 2. 创建 Workspace
