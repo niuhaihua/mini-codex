@@ -1,80 +1,655 @@
 # Mini Codex
 
-一个基于 **TypeScript + OpenAI API** 实现的极简 Codex 风格 AI Coding Agent。
+一个基于 **TypeScript + Node.js + OpenAI Responses API** 实现的轻量级 Coding Agent。
 
-项目目标是从零搭建一个最小可运行的 AI 编程助手，理解 Coding Agent 的基本工作原理，并逐步扩展文件读取、文件修改、命令执行、工具调用等 Agent 能力。
+Mini Codex 的核心目标是理解用户的自然语言指令，并通过 LLM 自动调用文件系统和命令执行工具完成开发任务。
 
-## ✨ 特性
+目前已经支持：
 
-- 🤖 基于 OpenAI API
-- 🟦 TypeScript 开发
-- 🟢 Node.js 运行环境
-- 🛠️ 支持开发模式实时运行
-- 📦 支持 TypeScript 编译构建
-- 🔍 支持 TypeScript 类型检查
-- 🧹 支持清理构建目录
-- 🔄 支持一键重新构建
-- 🧩 为后续扩展 Coding Agent Tools 做基础
+* 📁 文件目录浏览
+* 📖 文件读取
+* ✍️ 文件创建与写入
+* 📝 文件内容编辑
+* 🗑️ 文件删除
+* 🔎 文件内容搜索
+* 💻 Shell / CMD 命令执行
+* 🛡️ Workspace 工作区路径隔离
+* 🔄 Agent Tool Calling 循环
+* 🤖 OpenAI Responses API
+* 🖥️ CLI 交互模式
 
-## 📦 技术栈
+---
 
-| 技术 | 用途 |
-|---|---|
-| Node.js | JavaScript 运行环境 |
-| TypeScript | 项目开发语言 |
-| OpenAI SDK | 调用 OpenAI API |
-| dotenv | 加载环境变量 |
-| tsx | TypeScript 开发环境运行 |
-| pnpm | 包管理工具 |
+## 1. 项目架构
 
-## 📁 项目结构
+整体执行流程：
+
+```text
+                    User
+                     │
+                     ▼
+                CLI / index.ts
+                     │
+                     ▼
+                  Agent
+                     │
+                     ▼
+             OpenAI Responses API
+                     │
+                     ▼
+               Function Call
+                     │
+                     ▼
+              Tool Executor
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+          ▼                     ▼
+      Workspace              Tools
+          │                     │
+          │          ┌──────────┼──────────┐
+          │          │          │          │
+          ▼          ▼          ▼          ▼
+       路径安全    文件操作    搜索       命令
+          │
+          ▼
+      File System
+          │
+          ▼
+      Tool Result
+          │
+          └──────────────► Agent
+                              │
+                              ▼
+                            LLM
+```
+
+Agent 的基本循环：
+
+```text
+User
+ ↓
+LLM
+ ↓
+是否需要 Tool？
+ ├── 否 → Final Answer
+ │
+ └── 是
+      ↓
+   Function Call
+      ↓
+    Tool
+      ↓
+ Tool Result
+      ↓
+     LLM
+      ↓
+     ...
+```
+
+---
+
+## 2. 技术栈
+
+| 技术                   | 用途                      |
+| -------------------- | ----------------------- |
+| TypeScript           | 项目主要开发语言                |
+| Node.js              | Agent 运行环境              |
+| OpenAI SDK           | 调用 OpenAI Responses API |
+| OpenAI Responses API | LLM 与 Tool Calling      |
+| dotenv               | 环境变量配置                  |
+| readline             | CLI 交互                  |
+| Node.js fs/promises  | 文件系统操作                  |
+| tsx                  | TypeScript 开发运行         |
+| pnpm / npm           | 包管理                     |
+
+---
+
+## 3. 项目结构
 
 ```text
 mini-codex/
+│
 ├── src/
-│   └── index.ts          # 程序入口
+│   │
+│   ├── agent/
+│   │   ├── agent.ts
+│   │   ├── context.ts
+│   │   └── prompt.ts
+│   │
+│   ├── llm/
+│   │   ├── openai.ts
+│   │   └── types.ts
+│   │
+│   ├── tools/
+│   │   ├── index.ts
+│   │   ├── tool.ts
+│   │   ├── listFiles.ts
+│   │   ├── readFile.ts
+│   │   ├── writeFile.ts
+│   │   ├── editFile.ts
+│   │   ├── deleteFile.ts
+│   │   ├── searchFiles.ts
+│   │   └── runCommand.ts
+│   │
+│   ├── workspace/
+│   │   └── workspace.ts
+│   │
+│   └── index.ts
 │
-├── dist/                 # TypeScript 编译后的文件
+├── workspace/
+│   └── ...
 │
-├── .env                  # 环境变量配置
+├── .env
 ├── package.json
 ├── tsconfig.json
 └── README.md
 ```
 
-> `dist/` 为编译产物，通常不需要手动修改。
+---
 
-## 🚀 安装
+## 4. Workspace
 
-### 1. 安装 Node.js
+Mini Codex 不直接允许 Agent 任意操作项目文件。
 
-建议使用较新的 Node.js LTS 版本。
+所有文件操作都通过 `Workspace` 进行路径解析。
 
-检查 Node.js：
-
-```bash
-node -v
+```ts
+const workspace = new Workspace(
+  path.resolve(process.cwd(), "workspace")
+);
 ```
 
-检查 pnpm：
-
-```bash
-pnpm -v
-```
-
-项目指定的包管理器版本：
+例如：
 
 ```text
-pnpm@10.32.1
+mini-codex/
+├── src/
+├── workspace/
+│   ├── src/
+│   │   └── index.ts
+│   └── package.json
+└── package.json
 ```
 
-### 2. 安装依赖
+Agent 请求：
 
-进入项目目录：
-
-```bash
-cd mini-codex
+```json
+{
+  "path": "src/index.ts"
+}
 ```
+
+最终访问：
+
+```text
+mini-codex/workspace/src/index.ts
+```
+
+### Workspace 路径安全
+
+`Workspace.resolve()` 会检查路径是否位于 Workspace 内部。
+
+例如：
+
+```text
+src/index.ts
+```
+
+允许访问。
+
+而：
+
+```text
+../package.json
+```
+
+会被拒绝。
+
+核心逻辑：
+
+```ts
+resolve(relativePath: string): string {
+  const absolutePath = path.resolve(
+    this.root,
+    relativePath,
+  );
+
+  this.ensureInsideWorkspace(
+    absolutePath,
+  );
+
+  return absolutePath;
+}
+```
+
+因此 Agent 无法通过普通文件 Tool 越过 Workspace 操作外部文件。
+
+---
+
+## 5. Tools
+
+目前 Mini Codex 支持 7 个 Tool。
+
+### 5.1 list_files
+
+列出目录中的文件和目录。
+
+调用参数：
+
+```json
+{
+  "path": "src"
+}
+```
+
+功能：
+
+```text
+workspace/src/
+├── index.ts
+├── agent.ts
+└── tools/
+```
+
+如果不传 `path`，默认使用 Workspace 根目录。
+
+---
+
+### 5.2 read_file
+
+读取文件内容。
+
+调用参数：
+
+```json
+{
+  "path": "src/index.ts"
+}
+```
+
+返回文件文本内容。
+
+---
+
+### 5.3 write_file
+
+创建或者覆盖文件。
+
+调用参数：
+
+```json
+{
+  "path": "src/test.ts",
+  "content": "console.log('hello');"
+}
+```
+
+如果父目录不存在，会自动创建。
+
+---
+
+### 5.4 edit_file
+
+修改文件中的指定文本。
+
+调用参数：
+
+```json
+{
+  "path": "src/index.ts",
+  "oldText": "console.log('hello');",
+  "newText": "console.log('Hello Mini Codex');"
+}
+```
+
+为了避免 Agent 误修改多个位置，目前要求 `oldText` 在文件中必须只出现一次。
+
+如果出现多次：
+
+```text
+oldText 在文件中出现了 3 次，无法确定应该修改哪一处
+```
+
+Tool 会返回错误，Agent 可以根据错误重新读取文件并尝试修改。
+
+---
+
+### 5.5 delete_file
+
+删除指定文件。
+
+调用参数：
+
+```json
+{
+  "path": "src/test.ts"
+}
+```
+
+如果目标不是文件，则返回错误。
+
+---
+
+### 5.6 search_files
+
+搜索 Workspace 中的文件内容。
+
+调用参数：
+
+```json
+{
+  "query": "Mini Codex",
+  "path": "src"
+}
+```
+
+返回匹配文件、行号以及匹配内容。
+
+例如：
+
+```json
+[
+  {
+    "path": "src/index.ts",
+    "line": 10,
+    "content": "console.log('Mini Codex');"
+  }
+]
+```
+
+---
+
+### 5.7 run_command
+
+在 Workspace 根目录执行命令。
+
+调用参数：
+
+```json
+{
+  "command": "npm test"
+}
+```
+
+Windows 下使用：
+
+```text
+cmd.exe
+```
+
+Linux / macOS 下使用：
+
+```text
+/bin/bash
+```
+
+同时设置：
+
+```text
+cwd = workspace.getRoot()
+```
+
+因此命令默认在 Workspace 中执行。
+
+例如：
+
+```text
+You:
+执行 node -v
+```
+
+Agent 可以调用：
+
+```text
+run_command
+```
+
+最终相当于在：
+
+```text
+mini-codex/workspace/
+```
+
+中执行命令。
+
+---
+
+## 6. Tool 注入
+
+Tools 并不是直接使用全局文件系统。
+
+启动 Agent 时，将 Workspace 注入 Tool：
+
+```ts
+const workspace = new Workspace(
+  path.resolve(
+    process.cwd(),
+    "workspace"
+  )
+);
+
+const toolExecutor =
+  createToolExecutor(
+    workspace
+  );
+
+const agent = new Agent({
+  model,
+  tools: toolDefinitions,
+  toolExecutor,
+});
+```
+
+因此依赖关系为：
+
+```text
+index.ts
+   │
+   ▼
+Workspace
+   │
+   ▼
+createToolExecutor()
+   │
+   ▼
+Tools
+   │
+   ▼
+File System
+```
+
+这种设计可以让 Tool 不需要自己管理 Workspace 路径。
+
+---
+
+## 7. Agent
+
+`Agent` 是整个项目的核心。
+
+它负责：
+
+1. 接收用户任务
+2. 保存 Context
+3. 调用 LLM
+4. 判断是否存在 Function Call
+5. 执行 Tool
+6. 保存 Tool Result
+7. 再次调用 LLM
+8. 直到模型返回最终答案
+
+核心循环：
+
+```ts
+for (
+  let iteration = 0;
+  iteration < maxIterations;
+  iteration++
+) {
+  const response =
+    await this.model.chat({
+      messages:
+        this.context.getItems(),
+      tools: this.tools,
+    });
+
+  // Function Call
+  // ↓
+  // Execute Tool
+  // ↓
+  // Add Tool Result
+}
+```
+
+默认最大循环次数：
+
+```ts
+maxIterations = 20
+```
+
+防止 Agent 因为异常情况无限调用 Tool。
+
+---
+
+## 8. Context
+
+`AgentContext` 负责保存 Agent 当前对话状态。
+
+支持：
+
+```text
+SystemMessage
+UserMessage
+AssistantMessage
+FunctionCall
+FunctionCallOutput
+```
+
+完整流程：
+
+```text
+System
+ ↓
+User
+ ↓
+Assistant
+ ↓
+Function Call
+ ↓
+Function Call Output
+ ↓
+Assistant
+ ↓
+...
+```
+
+例如：
+
+```text
+User:
+读取 src/index.ts
+
+Assistant:
+Function Call → read_file
+
+Tool:
+返回文件内容
+
+Assistant:
+根据文件内容继续分析
+```
+
+Context 会将这些信息全部保存下来，使下一次 LLM 请求能够看到之前的 Tool 调用和结果。
+
+---
+
+## 9. OpenAI Responses API
+
+项目通过 `OpenAIModel` 对 OpenAI SDK 进行封装。
+
+Agent 不直接依赖 OpenAI SDK，而是依赖：
+
+```ts
+ModelClient
+```
+
+接口：
+
+```ts
+export interface ModelClient {
+  chat(params: {
+    messages: ContextItem[];
+    tools?: ToolDefinition[];
+  }): Promise<ModelResponse>;
+}
+```
+
+因此 Agent 与具体模型服务解耦。
+
+当前实现：
+
+```text
+Agent
+ ↓
+ModelClient
+ ↓
+OpenAIModel
+ ↓
+OpenAI Responses API
+```
+
+未来可以替换成其他兼容实现：
+
+```text
+Agent
+ │
+ └── ModelClient
+       ├── OpenAIModel
+       ├── AzureOpenAIModel
+       ├── ClaudeModel
+       └── OtherModel
+```
+
+---
+
+## 10. 环境变量
+
+创建 `.env`：
+
+```env
+OPENAI_API_KEY=your_api_key
+
+OPENAI_MODEL=gpt-5
+```
+
+如果使用 OpenAI Compatible API，可以设置：
+
+```env
+OPENAI_API_KEY=your_api_key
+OPENAI_MODEL=your_model
+OPENAI_BASE_URL=https://example.com/v1
+```
+
+代码会根据是否存在 `OPENAI_BASE_URL` 自动配置：
+
+```ts
+const model = new OpenAIModel({
+  apiKey: process.env.OPENAI_API_KEY ?? "",
+  model:
+    process.env.OPENAI_MODEL ?? "gpt-5",
+
+  ...(process.env.OPENAI_BASE_URL
+    ? {
+        baseURL:
+          process.env.OPENAI_BASE_URL,
+      }
+    : {}),
+});
+```
+
+---
+
+## 11. 安装
 
 安装依赖：
 
@@ -82,353 +657,328 @@ cd mini-codex
 pnpm install
 ```
 
-## 🔑 配置 OpenAI API
+或者：
 
-在项目根目录创建：
-
-```text
-.env
+```bash
+npm install
 ```
 
-例如：
+---
 
-```env
-OPENAI_API_KEY=your_api_key
-```
+## 12. 开发运行
 
-程序通过 `dotenv` 读取环境变量。
-
-> 不要把真实 API Key 提交到 Git 仓库。建议将 `.env` 加入 `.gitignore`。
-
-## ▶️ 运行项目
-
-### 开发模式
+开发模式：
 
 ```bash
 pnpm dev
 ```
 
-实际执行：
+或者：
 
 ```bash
-tsx src/index.ts
+npm run dev
 ```
 
-开发阶段推荐使用这种方式，可以直接运行 TypeScript 源码。
-
-### 构建项目
-
-```bash
-pnpm build
-```
-
-执行：
+启动后：
 
 ```text
-tsc
+=================================
+       Mini Codex Agent
+=================================
+
+Agent 已启动，可以开始提问。
+输入 exit、quit 或 q 退出。
+Workspace: D:\mini-codex\workspace
+
+You:
 ```
 
-TypeScript 会将 `src` 中的代码编译到 `dist`。
+---
 
-### 运行构建后的项目
+## 13. TypeScript 类型检查
 
-```bash
-pnpm start
-```
-
-实际执行：
-
-```bash
-node dist/index.js
-```
-
-### 类型检查
-
-如果只想检查 TypeScript 类型，而不生成编译文件：
+推荐开发过程中首先运行：
 
 ```bash
 pnpm typecheck
 ```
 
-等价于：
+或者：
 
 ```bash
-tsc --noEmit
+npm run typecheck
 ```
 
-### 清理构建目录
+用于检查 TypeScript 类型错误。
+
+---
+
+## 14. 构建
 
 ```bash
-pnpm clean
+pnpm build
 ```
 
-删除：
+或者：
+
+```bash
+npm run build
+```
+
+构建后：
 
 ```text
 dist/
 ```
 
-### 清理并重新构建
+---
+
+## 15. 生产运行
 
 ```bash
-pnpm rebuild
+pnpm start
 ```
 
-相当于：
+或者：
 
 ```bash
-pnpm clean
-pnpm build
+npm start
 ```
 
-## 📜 npm Scripts
+---
 
-| 命令 | 作用 |
-|---|---|
-| `pnpm dev` | 开发模式运行 |
-| `pnpm build` | 编译 TypeScript |
-| `pnpm start` | 运行编译后的程序 |
-| `pnpm typecheck` | TypeScript 类型检查 |
-| `pnpm clean` | 删除 `dist` |
-| `pnpm rebuild` | 清理并重新构建 |
+## 16. 示例
 
-## 🧠 Mini Codex 的基本架构
-
-当前项目可以理解为一个最小化的 Coding Agent：
+启动：
 
 ```text
-用户
- │
- ▼
-┌─────────────────┐
-│   Mini Codex    │
-│    Agent Loop   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   OpenAI API    │
-│      Model      │
-└────────┬────────┘
-         │
-         ▼
-    Tool / Action
-         │
-    ┌────┴────┐
-    ▼         ▼
- 文件系统    Shell
+You: 列出当前工作区的文件
 ```
 
-核心思想是：
+Agent：
 
 ```text
-用户提出任务
-    ↓
-Agent 理解任务
-    ↓
-调用模型
-    ↓
-模型决定是否需要工具
-    ↓
-执行工具
-    ↓
-把工具结果返回模型
-    ↓
-模型继续推理
-    ↓
-完成任务
+[Agent] iteration: 1
+[Agent] tool: list_files
+[Agent] arguments: {"path":"."}
 ```
 
-## 🛠️ 后续可以扩展的 Tools
+Tool 返回文件列表后，Agent 继续处理。
 
-这个项目的重点并不仅仅是调用 OpenAI API，而是逐渐构建一个真正的 Coding Agent。
+---
 
-可以按照下面的顺序扩展：
-
-### 第一阶段：文件系统
+### 创建文件
 
 ```text
-list_files
-read_file
+You: 创建一个 hello.ts，内容是 console.log("Hello Mini Codex")
+```
+
+Agent 会：
+
+```text
+LLM
+ ↓
 write_file
-delete_file
+ ↓
+Workspace.resolve()
+ ↓
+workspace/hello.ts
+ ↓
+Tool Result
+ ↓
+LLM
+ ↓
+Final Answer
 ```
 
-例如：
+---
+
+### 修改文件
 
 ```text
-用户：帮我看看 src 目录有哪些文件
-
-Agent
- ↓
-list_files("src")
- ↓
-返回文件列表
+You: 把 hello.ts 里的 Hello Mini Codex 修改成 Hello World
 ```
 
-### 第二阶段：文件编辑
-
-增加：
+Agent 会：
 
 ```text
-create_file
+read_file
+   ↓
+分析文件
+   ↓
 edit_file
-replace_in_file
+   ↓
+Tool Result
+   ↓
+Final Answer
 ```
 
-让 Agent 能够真正修改代码。
+---
 
-### 第三阶段：Shell
+### 执行命令
 
-增加：
+```text
+You: 执行 node -v
+```
+
+Agent：
 
 ```text
 run_command
 ```
 
-例如：
+命令执行目录：
 
 ```text
-pnpm install
-pnpm build
-npm test
-git status
+workspace/
 ```
 
-这样 Agent 就具备执行开发任务的能力。
+---
 
-### 第四阶段：Agent Loop
+## 17. 安全设计
 
-将程序从：
+目前主要通过 Workspace 实现文件访问隔离。
+
+### 路径隔离
+
+允许：
 
 ```text
-用户 → 模型 → 返回结果
+workspace/src/index.ts
 ```
 
-升级为：
+拒绝：
 
 ```text
-用户
- ↓
-模型
- ↓
-Tool Call
- ↓
-执行 Tool
- ↓
-Tool Result
- ↓
-模型
- ↓
-Tool Call
- ↓
-...
- ↓
+../package.json
+../../secret.txt
+```
+
+### 编辑保护
+
+`edit_file` 要求 `oldText` 唯一匹配。
+
+如果：
+
+```text
+oldText
+```
+
+出现多次，则拒绝修改。
+
+### 命令执行
+
+命令执行目前限制在：
+
+```text
+workspace/
+```
+
+作为工作目录。
+
+> 注意：`run_command` 目前只是限制命令的工作目录，并不能阻止 Shell 命令本身访问 Workspace 外部资源。例如 Windows 下的命令仍然可能通过绝对路径访问其他目录。因此 `run_command` 当前不应被视为完整的操作系统级沙箱。
+
+---
+
+## 18. 当前版本能力
+
+目前已经形成一个最小可运行的 Coding Agent：
+
+```text
+                 Mini Codex
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+        Agent                 Tools
+          │                     │
+          │          ┌──────────┼───────────┐
+          │          │          │           │
+          ▼          ▼          ▼           ▼
+        LLM       文件读取    文件修改     命令执行
+          │          │          │           │
+          └──────────┴──────────┴───────────┘
+                     │
+                  Workspace
+                     │
+                     ▼
+                 File System
+```
+
+已经具备 Coding Agent 最核心的：
+
+```text
+理解任务
+   ↓
+规划
+   ↓
+调用 Tool
+   ↓
+读取结果
+   ↓
+继续调用 Tool
+   ↓
 完成任务
 ```
 
-这一步是 Mini Codex 的核心。
+---
 
-## 🎯 项目目标
+## 19. 后续可以继续扩展
 
-最终希望实现一个简化版 Coding Agent：
+在当前架构基础上，可以继续增加：
 
-```text
-Mini Codex
-│
-├── Agent
-│   ├── Prompt
-│   ├── Agent Loop
-│   └── Context
-│
-├── Model
-│   └── OpenAI Responses API
-│
-├── Tools
-│   ├── listFiles
-│   ├── readFile
-│   ├── writeFile
-│   ├── editFile
-│   └── runCommand
-│
-└── Runtime
-    ├── Node.js
-    └── TypeScript
-```
+### Agent 能力
 
-最终使用体验类似：
+* Streaming 输出
+* Tool Call 并行执行
+* Context 压缩
+* Token 管理
+* 自动重试
+* 最大执行时间
+* Agent 状态事件
+* Tool 执行日志
 
-```text
-> 帮我找到项目中所有使用 axios 的文件
+### Coding Agent 能力
 
-Agent:
-正在搜索项目...
+* Git Tool
+* diff Tool
+* patch Tool
+* 文件变更确认
+* 自动测试
+* 自动修复 TypeScript 错误
+* 自动运行 lint
+* 自动运行 build
+* 项目结构分析
+* 代码搜索优化
 
-> 找到了 8 个文件。
+### 安全能力
 
-> 帮我把 axios 请求统一增加 timeout: 10000
+* Tool 权限控制
+* 命令执行确认
+* 危险命令拦截
+* 文件修改确认
+* 更严格的命令沙箱
+* Workspace 权限策略
 
-Agent:
-我会修改以下文件：
-- src/api/user.ts
-- src/api/device.ts
-- src/api/order.ts
+---
 
-是否继续？
+## 20. 项目目标
 
-> yes
+Mini Codex 的核心并不是简单地实现一个聊天机器人，而是构建一个最小化的 **AI Coding Agent Runtime**。
 
-Agent:
-修改完成。
-
-正在执行 pnpm build...
-
-✓ Build successful
-```
-
-## 📚 学习路线
-
-如果使用这个项目学习 AI Coding Agent，可以按照：
+核心模型：
 
 ```text
-TypeScript
-   ↓
-Node.js
-   ↓
-OpenAI API
-   ↓
+LLM
+ +
+Context
+ +
 Tool Calling
-   ↓
-Function Calling
-   ↓
-Agent Loop
-   ↓
-文件系统 Tools
-   ↓
-Shell Tools
-   ↓
-Context Management
-   ↓
-MCP
-   ↓
-完整 Coding Agent
+ +
+Workspace
+ +
+Tool Executor
+ =
+Coding Agent
 ```
 
-## 🔒 安全注意事项
-
-Coding Agent 一旦拥有文件系统和 Shell 权限，就可能执行具有破坏性的操作。
-
-后续增加工具时建议：
-
-- 限制 Agent 的工作目录
-- 禁止访问敏感目录
-- Shell 命令执行前进行权限检查
-- 对危险命令进行拦截
-- 文件修改提供 Diff
-- 支持用户确认
-- 不允许 `.env` 等敏感文件被模型随意读取
-- API Key 不要写入源码
-
-## 📄 License
-
-本项目使用 ISC License。
+通过不断扩展 Tool 和 Agent Runtime，可以逐步实现类似 Codex / Claude Code 的开发者 Agent 工作流。
