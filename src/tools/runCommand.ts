@@ -1,36 +1,34 @@
-import {
-  exec
-} from "child_process";
-
-import {
-  promisify
-} from "util";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 
-/**
- * 执行终端命令
- */
+export interface RunCommandResult {
+  success: boolean;
+  command: string;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}
+
 export async function runCommand(
-  command: string
-) {
+  command: string,
+  cwd: string = process.cwd()
+): Promise<RunCommandResult> {
   try {
     const {
       stdout,
-      stderr
+      stderr,
     } = await execAsync(command, {
-      cwd: process.cwd(),
+      cwd,
 
-      // Windows 使用 cmd
       shell:
         process.platform === "win32"
           ? "cmd.exe"
           : "/bin/bash",
 
-      // 2分钟超时
       timeout: 120000,
 
-      // 最大输出 10MB
       maxBuffer:
         10 * 1024 * 1024,
     });
@@ -41,13 +39,24 @@ export async function runCommand(
       stdout,
       stderr,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const execError =
+      error as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+      };
+
     return {
       success: false,
       command,
-      stdout: error.stdout || "",
-      stderr: error.stderr || "",
-      error: error.message,
+      stdout:
+        execError.stdout ?? "",
+      stderr:
+        execError.stderr ?? "",
+      error:
+        execError.message ??
+        String(error),
     };
   }
 }

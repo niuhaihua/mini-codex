@@ -8,21 +8,20 @@ export async function writeFile(
   filePath: string,
   content: string
 ) {
-  const absolutePath = path.resolve(filePath);
 
   // 自动创建父目录
-  await fs.mkdir(path.dirname(absolutePath), {
+  await fs.mkdir(path.dirname(filePath), {
     recursive: true,
   });
 
   await fs.writeFile(
-    absolutePath,
+    filePath,
     content,
     "utf8"
   );
 
   return {
     success: true,
-    path: absolutePath,
+    path: filePath,
   };
 }

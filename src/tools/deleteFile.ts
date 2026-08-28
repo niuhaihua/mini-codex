@@ -6,10 +6,12 @@ import path from "path";
  */
 export async function deleteFile(
   filePath: string
-) {
-  const absolutePath = path.resolve(filePath);
-
-  const stat = await fs.stat(absolutePath);
+) : Promise<{
+  success: boolean;
+  path: string;
+  message: string;
+}> {
+  const stat = await fs.stat(filePath);
 
   if (!stat.isFile()) {
     throw new Error(
@@ -17,11 +19,11 @@ export async function deleteFile(
     );
   }
 
-  await fs.unlink(absolutePath);
+  await fs.unlink(filePath);
 
   return {
     success: true,
-    path: absolutePath,
+    path: filePath,
     message: "文件删除成功",
   };
 }

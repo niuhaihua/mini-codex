@@ -1,133 +1,205 @@
 import path from "node:path";
+import readline from "node:readline/promises";
+import {
+  stdin as input,
+  stdout as output,
+} from "node:process";
+
+import "dotenv/config";
 
 import { Agent } from "./agent/agent.js";
 import { OpenAIModel } from "./llm/openai.js";
 import { Workspace } from "./workspace/workspace.js";
-import "dotenv/config";
+
+import {
+  toolDefinitions,
+  createToolExecutor,
+} from "./tools/index.js";
 
 async function main(): Promise<void> {
-  /**
-   * =========================
-   * 1. OpenAI 配置
-   * =========================
-   *
-   * 如果使用官方 API：
-   *
-   * baseURL:
-   * https://api.openai.com/v1
-   *
-   * 如果使用 OpenAI Compatible 中转站，
-   * 修改成对应的 /v1 地址即可。
-   */
+  const apiKey =
+    process.env.OPENAI_API_KEY;
 
-  const model = new OpenAIModel({
-    apiKey: process.env.OPENAI_API_KEY ?? "",
-    model: process.env.OPENAI_MODEL ?? "gpt-5",
-    ...(process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : {}),
-  });
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is not configured."
+    );
+  }
+
   /**
-   * =========================
-   * 2. 创建 Workspace
-   * =========================
-   *
-   * 当前项目根目录下的 workspace
-   *
-   * 例如：
-   *
-   * project/
-   * ├── src/
-   * ├── package.json
-   * └── workspace/
+   * Model
+   */
+  const model =
+    new OpenAIModel({
+      apiKey,
+      model:
+        process.env.OPENAI_MODEL ??
+        "gpt-5",
+      ...(process.env.OPENAI_BASE_URL
+        ? {
+            baseURL:
+              process.env.OPENAI_BASE_URL,
+          }
+        : {}),
+    });
+
+  /**
+   * Workspace
    */
   const workspace =
     new Workspace(
       path.resolve(
         process.cwd(),
-        "workspace",
-      ),
+        "workspace"
+      )
     );
 
   /**
-   * =========================
-   * 3. 创建 Agent
-   * =========================
+   * Tool Executor
+   *
+   * 将 Workspace 注入 Tool。
    */
-  const agent = new Agent({
-    model,
-  });
-
-  /**
-   * =========================
-   * 4. 执行任务
-   * =========================
-   */
-  const result =
-    await agent.run(
-      "你好，请介绍一下你自己。",
+  const toolExecutor =
+    createToolExecutor(
+      workspace
     );
 
   /**
-   * =========================
-   * 5. 输出结果
-   * =========================
+   * Agent
    */
-  console.log(
-    "\n==============================",
-  );
-
-  console.log(
-    "Agent Result:",
-  );
-
-  console.log(
-    "==============================\n",
-  );
-
-  console.log(result);
+  const agent =
+    new Agent({
+      model,
+      tools: toolDefinitions,
+      toolExecutor,
+    });
 
   /**
-   * =========================
-   * 6. 输出 Workspace
-   * =========================
+   * CLI
    */
+  const rl =
+    readline.createInterface({
+      input,
+      output,
+    });
+
   console.log(
-    "\nWorkspace:",
+    "================================="
+  );
+  console.log(
+    "       Mini Codex Agent"
+  );
+  console.log(
+    "================================="
   );
 
   console.log(
-    workspace.getRoot(),
+    "Agent 已启动，可以开始提问。"
   );
+
+  console.log(
+    "输入 exit、quit 或 q 退出。"
+  );
+
+  console.log(
+    `Workspace: ${workspace.getRoot()}`
+  );
+
+  console.log();
+
+  try {
+    while (true) {
+      const question =
+        (
+          await rl.question(
+            "You: "
+          )
+        ).trim();
+
+      if (!question) {
+        continue;
+      }
+
+      if (
+        [
+          "exit",
+          "quit",
+          "q",
+        ].includes(
+          question.toLowerCase()
+        )
+      ) {
+        console.log(
+          "Agent 已退出。"
+        );
+
+        break;
+      }
+
+      try {
+        const result =
+          await agent.run(
+            question
+          );
+
+        console.log(
+          "\nAgent:"
+        );
+
+        console.log(result);
+
+        console.log();
+      } catch (
+        error: unknown
+      ) {
+        console.error(
+          "\n执行任务时发生错误："
+        );
+
+        if (
+          error instanceof Error
+        ) {
+          console.error(
+            error.message
+          );
+        } else {
+          console.error(
+            String(error)
+          );
+        }
+
+        console.log();
+      }
+    }
+  } finally {
+    rl.close();
+  }
 }
 
-/**
- * 启动
- */
 main().catch(
   (error: unknown) => {
     console.error(
-      "\nAgent Error:",
+      "\nAgent Error:"
     );
 
     if (
       error instanceof Error
     ) {
       console.error(
-        error.message,
+        error.message
       );
 
-      if (
-        error.stack
-      ) {
+      if (error.stack) {
         console.error(
-          error.stack,
+          error.stack
         );
       }
     } else {
       console.error(
-        error,
+        String(error)
       );
     }
 
     process.exitCode = 1;
-  },
+  }
 );

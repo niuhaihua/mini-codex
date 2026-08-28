@@ -40,7 +40,7 @@ export async function searchFiles(
 ): Promise<SearchResult[]> {
   const results: SearchResult[] = [];
 
-  const rootPath = path.resolve(searchPath);
+  const rootPath = searchPath;
 
   async function walk(
     currentPath: string

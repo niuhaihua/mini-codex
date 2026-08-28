@@ -8,15 +8,20 @@ import type {
 } from "../llm/types.js";
 
 /**
+ * Tool 参数
+ */
+export type ToolArguments = Record<
+  string,
+  unknown
+>;
+
+/**
  * Tool 执行器
  */
 export interface ToolExecutor {
   execute(
     name: string,
-    args: Record<
-      string,
-      unknown
-    >,
+    args: ToolArguments
   ): Promise<string>;
 }
 
@@ -24,53 +29,19 @@ export interface ToolExecutor {
  * Agent 配置
  */
 export interface AgentOptions {
-  /**
-   * LLM Client
-   */
   model: ModelClient;
 
-  /**
-   * Agent 可使用的 Tools
-   */
   tools?: ToolDefinition[];
 
-  /**
-   * Tool 执行器
-   */
   toolExecutor?: ToolExecutor;
 
-  /**
-   * 最大循环次数
-   */
   maxIterations?: number;
 
-  /**
-   * System Prompt
-   */
   systemPrompt?: string;
 }
 
 /**
  * Agent
- *
- * 主循环：
- *
- * User
- * ↓
- * LLM
- * ↓
- * Function Call？
- * ├── 否 → Final Answer
- * │
- * └── 是
- *      ↓
- *    Tool
- *      ↓
- * Function Call Output
- *      ↓
- *     LLM
- *      ↓
- *    ...
  */
 export class Agent {
   private readonly model: ModelClient;
@@ -87,13 +58,10 @@ export class Agent {
 
   private context: AgentContext;
 
-  constructor(
-    options: AgentOptions,
-  ) {
+  constructor(options: AgentOptions) {
     this.model = options.model;
 
-    this.tools =
-      options.tools ?? [];
+    this.tools = options.tools ?? [];
 
     this.toolExecutor =
       options.toolExecutor;
@@ -107,7 +75,7 @@ export class Agent {
 
     this.context =
       new AgentContext(
-        this.systemPrompt,
+        this.systemPrompt
       );
   }
 
@@ -115,38 +83,27 @@ export class Agent {
    * 执行用户任务
    */
   async run(
-    userMessage: string,
+    userMessage: string
   ): Promise<string> {
-    /**
-     * 添加 User Message
-     */
     this.context.addUserMessage(
-      userMessage,
+      userMessage
     );
 
-    /**
-     * Agent Loop
-     */
     for (
       let iteration = 0;
-      iteration <
-      this.maxIterations;
+      iteration < this.maxIterations;
       iteration++
     ) {
       console.log(
         `[Agent] iteration: ${
           iteration + 1
-        }`,
+        }/${this.maxIterations}`
       );
 
-      /**
-       * 调用 LLM
-       */
       const response =
         await this.model.chat({
           messages:
             this.context.getItems(),
-
           tools: this.tools,
         });
 
@@ -154,19 +111,27 @@ export class Agent {
        * 保存 Assistant 文本
        */
       if (
-        response.content !==
-        null &&
-        response.content.length >
-          0
+        response.content &&
+        response.content.trim()
       ) {
         this.context.addAssistantMessage(
-          response.content,
+          response.content
         );
 
         console.log(
           "[Agent] assistant:",
-          response.content,
+          response.content
         );
+      }
+
+      /**
+       * 没有 Tool Call
+       */
+      if (
+        response.functionCalls.length ===
+        0
+      ) {
+        return response.content ?? "";
       }
 
       /**
@@ -177,21 +142,7 @@ export class Agent {
           response.functionCalls
       ) {
         this.context.addFunctionCall(
-          functionCall,
-        );
-      }
-
-      /**
-       * 没有 Tool Call
-       *
-       * 说明模型已经完成任务。
-       */
-      if (
-        response.functionCalls
-          .length === 0
-      ) {
-        return (
-          response.content ?? ""
+          functionCall
         );
       }
 
@@ -204,21 +155,18 @@ export class Agent {
       ) {
         const result =
           await this.executeFunctionCall(
-            functionCall,
+            functionCall
           );
 
-        /**
-         * 保存 Tool Result
-         */
         this.context.addFunctionCallOutput(
           functionCall.call_id,
-          result,
+          result
         );
       }
     }
 
     throw new Error(
-      `Agent exceeded maximum iterations: ${this.maxIterations}`,
+      `Agent exceeded maximum iterations: ${this.maxIterations}`
     );
   }
 
@@ -226,89 +174,64 @@ export class Agent {
    * 执行一个 Function Call
    */
   private async executeFunctionCall(
-    functionCall: FunctionCall,
+    functionCall: FunctionCall
   ): Promise<string> {
     const {
       call_id,
       name,
-      arguments:
-        rawArguments,
+      arguments: rawArguments,
     } = functionCall;
 
     console.log(
-      `[Agent] tool: ${name}`,
+      `[Agent] tool: ${name}`
     );
 
     console.log(
-      `[Agent] arguments: ${rawArguments}`,
+      `[Agent] arguments: ${rawArguments}`
     );
 
-    /**
-     * 没有 Tool Executor
-     */
-    if (
-      this.toolExecutor ===
-      undefined
-    ) {
+    if (!this.toolExecutor) {
       return JSON.stringify({
         success: false,
-
         error:
           "No tool executor is configured.",
-
         tool: name,
+        call_id,
       });
     }
 
     /**
      * 解析参数
      */
-    let args: Record<
-      string,
-      unknown
-    >;
+    let args: ToolArguments;
 
     try {
-      const parsed =
+      const parsed: unknown =
         JSON.parse(
-          rawArguments || "{}",
+          rawArguments || "{}"
         );
 
-      /**
-       * Tool 参数必须是 Object
-       */
       if (
         parsed === null ||
-        typeof parsed !==
-          "object" ||
+        typeof parsed !== "object" ||
         Array.isArray(parsed)
       ) {
         return JSON.stringify({
           success: false,
-
           error:
             "Tool arguments must be a JSON object.",
-
           tool: name,
-
           call_id,
         });
       }
 
-      args =
-        parsed as Record<
-          string,
-          unknown
-        >;
+      args = parsed as ToolArguments;
     } catch {
       return JSON.stringify({
         success: false,
-
         error:
-          `Invalid JSON arguments: ${rawArguments}`,
-
+          "Invalid JSON tool arguments.",
         tool: name,
-
         call_id,
       });
     }
@@ -317,26 +240,15 @@ export class Agent {
      * 执行 Tool
      */
     try {
-      const result =
-        await this.toolExecutor.execute(
-          name,
-          args,
-        );
-
-      return result;
-    } catch (error) {
-      /**
-       * Tool 执行失败
-       *
-       * 将错误交给模型继续处理。
-       */
+      return await this.toolExecutor.execute(
+        name,
+        args
+      );
+    } catch (error: unknown) {
       return JSON.stringify({
         success: false,
-
         tool: name,
-
         call_id,
-
         error:
           error instanceof Error
             ? error.message
@@ -358,7 +270,7 @@ export class Agent {
   reset(): void {
     this.context =
       new AgentContext(
-        this.systemPrompt,
+        this.systemPrompt
       );
   }
 }

@@ -1,5 +1,4 @@
 import fs from "fs/promises";
-import path from "path";
 
 /**
  * 读取文件
@@ -7,13 +6,12 @@ import path from "path";
 export async function readFile(
   filePath: string
 ): Promise<string> {
-  const absolutePath = path.resolve(filePath);
 
-  const stat = await fs.stat(absolutePath);
+  const stat = await fs.stat(filePath);
 
   if (!stat.isFile()) {
     throw new Error(`${filePath} 不是一个文件`);
   }
 
-  return await fs.readFile(absolutePath, "utf8");
+  return await fs.readFile(filePath, "utf8");
 }

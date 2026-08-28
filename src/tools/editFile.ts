@@ -1,5 +1,4 @@
 import fs from "fs/promises";
-import path from "path";
 
 export interface EditFileOptions {
   path: string;
@@ -13,10 +12,10 @@ export interface EditFileOptions {
 export async function editFile(
   options: EditFileOptions
 ) {
-  const absolutePath = path.resolve(options.path);
+  const filePath = options.path;
 
   let content = await fs.readFile(
-    absolutePath,
+    filePath,
     "utf8"
   );
 
@@ -42,14 +41,14 @@ export async function editFile(
   );
 
   await fs.writeFile(
-    absolutePath,
+    filePath,
     content,
     "utf8"
   );
 
   return {
     success: true,
-    path: absolutePath,
+    path: filePath,
     message: "文件修改成功",
   };
 }
