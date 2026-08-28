@@ -1,5 +1,4 @@
 import fs from "fs/promises";
-import path from "path";
 
 /**
  * 删除文件

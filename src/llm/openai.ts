@@ -79,76 +79,76 @@ export class OpenAIModel
   /**
    * 调用 Responses API
    */
-async chat(params: {
-  messages: ContextItem[];
-  tools?: ToolDefinition[];
-}): Promise<ModelResponse> {
-  console.log("[OpenAI] model:", this.model);
+  async chat(params: {
+    messages: ContextItem[];
+    tools?: ToolDefinition[];
+  }): Promise<ModelResponse> {
+    console.log("[OpenAI] model:", this.model);
 
-  console.log(
-    "[OpenAI] messages:",
-    params.messages.length,
-  );
-
-  console.log(
-    "[OpenAI] tools:",
-    params.tools?.length ?? 0,
-  );
-
-  console.log("[OpenAI] sending request...");
-
-  const instructions =
-    this.getSystemPrompt(
-      params.messages,
+    console.log(
+      "[OpenAI] messages:",
+      params.messages.length,
     );
 
-  const input =
-    this.convertMessages(
-      params.messages,
+    console.log(
+      "[OpenAI] tools:",
+      params.tools?.length ?? 0,
     );
 
-  const tools =
-    this.convertTools(
-      params.tools ?? [],
+    console.log("[OpenAI] sending request...");
+
+    const instructions =
+      this.getSystemPrompt(
+        params.messages,
+      );
+
+    const input =
+      this.convertMessages(
+        params.messages,
+      );
+
+    const tools =
+      this.convertTools(
+        params.tools ?? [],
+      );
+
+    const request: ResponseCreateParamsNonStreaming =
+      {
+        model: this.model,
+
+        ...(instructions.length > 0
+          ? {
+              instructions,
+            }
+          : {}),
+
+        input,
+
+        ...(tools.length > 0
+          ? {
+              tools,
+            }
+          : {}),
+      };
+
+    const response =
+      await this.client.responses.create(
+        request,
+      );
+
+    console.log(
+      "[OpenAI] response received",
     );
 
-  const request: ResponseCreateParamsNonStreaming =
-    {
-      model: this.model,
-
-      ...(instructions.length > 0
-        ? {
-            instructions,
-          }
-        : {}),
-
-      input,
-
-      ...(tools.length > 0
-        ? {
-            tools,
-          }
-        : {}),
-    };
-
-  const response =
-    await this.client.responses.create(
-      request,
+    console.log(
+      "[OpenAI] output items:",
+      response.output.length,
     );
 
-  console.log(
-    "[OpenAI] response received",
-  );
-
-  console.log(
-    "[OpenAI] output items:",
-    response.output.length,
-  );
-
-  return this.parseResponse(
-    response,
-  );
-}
+    return this.parseResponse(
+      response,
+    );
+  }
 
   /**
    * 获取 System Prompt

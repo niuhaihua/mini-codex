@@ -9,7 +9,10 @@ import "dotenv/config";
 
 import { Agent } from "./agent/agent.js";
 import { OpenAIModel } from "./llm/openai.js";
+import { AnthropicModel } from "./llm/anthropic.js";
+import { GeminiModel } from "./llm/gemini.js";
 import { Workspace } from "./workspace/workspace.js";
+import { config } from "./config.js";
 
 import {
   toolDefinitions,
@@ -17,9 +20,9 @@ import {
 } from "./tools/index.js";
 
 async function main(): Promise<void> {
-  const apiKey =
-    process.env.OPENAI_API_KEY;
-
+  const apiKey = config.apiKey;
+  const baseURL = config.baseURL;
+  const curModel = config.model;
   if (!apiKey) {
     throw new Error(
       "OPENAI_API_KEY is not configured."
@@ -29,19 +32,49 @@ async function main(): Promise<void> {
   /**
    * Model
    */
-  const model =
-    new OpenAIModel({
-      apiKey,
-      model:
-        process.env.OPENAI_MODEL ??
-        "gpt-5",
-      ...(process.env.OPENAI_BASE_URL
-        ? {
-            baseURL:
-              process.env.OPENAI_BASE_URL,
-          }
-        : {}),
-    });
+  let model;
+
+  switch (config.provider) {
+    case "openai":
+      model = new OpenAIModel({
+        apiKey,
+        model: curModel,
+        ...(baseURL
+          ? {
+              baseURL,
+            }
+          : {}),
+      });
+      break;
+
+    case "anthropic":
+      model = new AnthropicModel({
+        apiKey,
+        model: curModel,
+        ...(baseURL
+          ? {
+              baseURL,
+            }
+          : {}),
+      });
+      break;
+    case "gemini":
+      model = new GeminiModel({
+        apiKey,
+        model: curModel,
+        ...(baseURL
+          ? {
+              baseURL,
+            }
+          : {}),
+      });
+      break;
+    default:
+      throw new Error(
+        `不支持的模型提供商: ${config.provider}`
+      );
+  }
+    
 
   /**
    * Workspace
