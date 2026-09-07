@@ -5,6 +5,18 @@ import { editFile } from "./editFile.js";
 import { deleteFile } from "./deleteFile.js";
 import { searchFiles } from "./searchFiles.js";
 import { runCommand } from "./runCommand.js";
+import {
+  gitStatus,
+} from "./gitStatus.js";
+import { gitDiff } from "./gitDiff.js";
+import { gitLog } from "./gitLog.js";
+import { gitCommit } from "./gitCommit.js";
+import {
+  gitCheckpoint,
+  gitCheckpointDiscard,
+  gitCheckpointInspect,
+} from "./gitCheckpoint.js";
+import { gitRollback } from "./gitRollback.js";
 
 import type { ToolDefinition } from "../llm/types.js";
 import type {
@@ -132,6 +144,81 @@ export function createToolRegistry(
       );
 
       return JSON.stringify(result);
+    },
+
+    /** Return the current Git branch and working tree status. */
+    git_status: async () => {
+      return JSON.stringify(
+        await gitStatus(workspace.getRoot())
+      );
+    },
+
+    /** Return the Git diff for unstaged or staged changes. */
+    git_diff: async (args) => {
+      const staged = args.staged === true;
+
+      return JSON.stringify(
+        await gitDiff(
+          workspace.getRoot(),
+          staged,
+        )
+      );
+    },
+
+    /** Return recent Git commits. */
+    git_log: async (args) => {
+      const maxCount = Number(args.maxCount ?? 10);
+
+      return JSON.stringify(
+        await gitLog(
+          workspace.getRoot(),
+          maxCount,
+        )
+      );
+    },
+
+    /** Commit currently staged changes. */
+    git_commit: async (args) => {
+      return JSON.stringify(
+        await gitCommit(
+          workspace.getRoot(),
+          String(args.message ?? ""),
+        )
+      );
+    },
+
+    /** Create an in-memory checkpoint of the current Git state. */
+    git_checkpoint: async () => {
+      return JSON.stringify(
+        await gitCheckpoint(workspace.getRoot())
+      );
+    },
+
+    git_checkpoint_discard: async (args) => {
+      return JSON.stringify(
+        gitCheckpointDiscard(
+          String(args.checkpointId ?? ""),
+        ),
+      );
+    },
+
+    git_checkpoint_inspect: async (args) => {
+      return JSON.stringify(
+        await gitCheckpointInspect(
+          workspace.getRoot(),
+          String(args.checkpointId ?? ""),
+        ),
+      );
+    },
+
+    /** Restore a previously created Git checkpoint. */
+    git_rollback: async (args) => {
+      return JSON.stringify(
+        await gitRollback(
+          workspace.getRoot(),
+          String(args.checkpointId ?? ""),
+        )
+      );
     },
   };
 }
@@ -289,6 +376,102 @@ export const toolDefinitions: ToolDefinition[] = [
         },
       },
       required: ["command"],
+    },
+  },
+
+  {
+    type: "function",
+    name: "git_status",
+    description:
+      "当前 Git 分支和工作区状态。",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+
+  {
+    type: "function",
+    name: "git_diff",
+    description:
+      "显示 Git 变更。将 staged 设置为 true 以显示暂存的变更。",
+    parameters: {
+      type: "object",
+      properties: {
+        staged: {
+          type: "boolean",
+          description:
+            "是否显示暂存的变更。默认为 false。",
+        },
+      },
+      required: [],
+    },
+  },
+
+  {
+    type: "function",
+    name: "git_log",
+    description:
+      "显示最近的 Git 提交记录，以紧凑的格式呈现。",
+    parameters: {
+      type: "object",
+      properties: {
+        maxCount: {
+          type: "integer",
+          description:
+            "要返回的提交数量最大值 (1-100, 默认 10)。",
+        },
+      },
+      required: [],
+    },
+  },
+
+  {
+    type: "function",
+    name: "git_commit",
+    description:
+      "提交已暂存的更改并提供提交信息。",
+    parameters: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description:
+            "提交信息。更改必须先暂存。",
+        },
+      },
+      required: ["message"],
+    },
+  },
+
+  {
+    type: "function",
+    name: "git_checkpoint",
+    description:
+      "创建当前 Git 状态的临时检查点。可以使用 git_rollback 恢复该检查点。",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+
+  {
+    type: "function",
+    name: "git_rollback",
+    description:
+      "恢复 Git 检查点。这将丢弃检查点之后进行的更改。",
+    parameters: {
+      type: "object",
+      properties: {
+        checkpointId: {
+          type: "string",
+          description:
+            "由 git_checkpoint 返回的 ID。",
+        },
+      },
+      required: ["checkpointId"],
     },
   },
 ];

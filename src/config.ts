@@ -1,3 +1,4 @@
+// 获取不同.env文件的配置
 import dotenv from "dotenv";
 
 const provider = process.argv[2] ?? "openai";
