@@ -13,6 +13,9 @@ Mini Codex 的核心目标是理解用户的自然语言指令，并通过 LLM �
 * 🗑️ 文件删除
 * 🔎 文件内容搜索
 * 💻 Shell / CMD 命令执行
+* Git 状态、diff、log 与 commit
+* Git checkpoint / rollback
+* Agent 自动检查修改，并在异常时自动回滚
 * 🛡️ Workspace 工作区路径隔离
 * 🔄 Agent Tool Calling 循环
 * 🤖 OpenAI Responses API
@@ -229,7 +232,7 @@ resolve(relativePath: string): string {
 
 ## 5. Tools
 
-目前 Mini Codex 支持 7 个 Tool。
+目前 Mini Codex 支持 13 个公开 Tool。
 
 ### 5.1 list_files
 
@@ -415,6 +418,42 @@ mini-codex/workspace/
 
 ---
 
+### 5.8 git_status
+
+显示当前分支和工作区状态，等价于 `git status --short --branch`。
+
+---
+
+### 5.9 git_diff
+
+显示工作区 diff。传入 `{"staged": true}` 时显示已暂存的 diff。
+
+---
+
+### 5.10 git_log
+
+显示最近的 Git 提交记录。`maxCount` 默认值为 10，取值范围为 1-100。
+
+---
+
+### 5.11 git_commit
+
+使用 `message` 提交已经暂存的修改。该 Tool 不会自动执行 `git add`。
+
+---
+
+### 5.12 git_checkpoint
+
+创建当前 Git 状态的临时 checkpoint，并返回 `checkpointId`。
+
+---
+
+### 5.13 git_rollback
+
+使用 `checkpointId` 恢复 checkpoint。该操作会丢弃 checkpoint 创建之后的修改，但会保留 checkpoint 创建之前已有的 staged、unstaged 和 untracked 文件。
+
+---
+
 ## 6. Tool 注入
 
 Tools 并不是直接使用全局文件系统。
@@ -508,6 +547,12 @@ maxIterations = 20
 ```
 
 防止 Agent 因为异常情况无限调用 Tool。
+
+### 自动检查与 Git checkpoint
+
+如果 Workspace 位于 Git 仓库中，Agent 会在每次任务开始时创建临时 checkpoint。每批 Tool 执行完成后，Agent 会检查 checkpoint 以来的增量 diff，并将检查摘要加入下一轮 Context，供模型复核修改。
+
+任务正常完成后 checkpoint 会自动释放；如果模型调用失败、Tool 执行抛出异常或超过最大循环次数，Agent 会自动 rollback 到任务开始前的状态。任务开始前用户已有的修改会被保留。
 
 ---
 
@@ -614,37 +659,29 @@ Agent
 
 ## 10. 环境变量
 
-创建 `.env`：
+启动时可通过第一个命令行参数选择 provider，默认使用 `openai`。程序会加载对应的 `.env.<provider>` 文件：
 
-```env
-OPENAI_API_KEY=your_api_key
-
-OPENAI_MODEL=gpt-5
+```bash
+pnpm dev -- openai
+pnpm dev -- anthropic
+pnpm dev -- gemini
 ```
 
-如果使用 OpenAI Compatible API，可以设置：
+例如 `.env.openai`：
 
 ```env
-OPENAI_API_KEY=your_api_key
-OPENAI_MODEL=your_model
-OPENAI_BASE_URL=https://example.com/v1
+MODEL_PROVIDER=openai
+MODEL_API_KEY=your_api_key
+MODEL_BASE_URL=https://api.openai.com/v1
+MODEL_NAME=gpt-5
 ```
 
-代码会根据是否存在 `OPENAI_BASE_URL` 自动配置：
+Anthropic 和 Gemini 使用各自的 `.env.anthropic`、`.env.gemini` 文件，并填写相同的四个变量。
 
-```ts
-const model = new OpenAIModel({
-  apiKey: process.env.OPENAI_API_KEY ?? "",
-  model:
-    process.env.OPENAI_MODEL ?? "gpt-5",
+仓库通过 `.gitignore` 中的 `.env*` 规则忽略所有环境文件。若某个 `.env` 文件之前已经被 Git 跟踪，需要从索引移除，但不会删除本地文件：
 
-  ...(process.env.OPENAI_BASE_URL
-    ? {
-        baseURL:
-          process.env.OPENAI_BASE_URL,
-      }
-    : {}),
-});
+```bash
+git rm --cached --ignore-unmatch -- '.env*'
 ```
 
 ---
@@ -939,10 +976,7 @@ workspace/
 
 ### Coding Agent 能力
 
-* Git Tool
-* diff Tool
 * patch Tool
-* 文件变更确认
 * 自动测试
 * 自动修复 TypeScript 错误
 * 自动运行 lint
