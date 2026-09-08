@@ -110,79 +110,79 @@ export class Agent {
       iteration < this.maxIterations;
       iteration++
       ) {
-      console.log(
-        `[Agent] iteration: ${
-          iteration + 1
-        }/${this.maxIterations}`
-      );
-
-      const response =
-        await this.model.chat({
-          messages:
-            this.context.getItems(),
-          tools: this.tools,
-        });
-
-      /**
-       * 保存 Assistant 文本
-       */
-      if (
-        response.content &&
-        response.content.trim()
-      ) {
-        this.context.addAssistantMessage(
-          response.content
-        );
-
         console.log(
-          "[Agent] assistant:",
-          response.content
+          `[Agent] iteration: ${
+            iteration + 1
+          }/${this.maxIterations}`
         );
-      }
 
-      /**
-       * 没有 Tool Call
-       */
-      if (
-        response.functionCalls.length ===
-        0
-      ) {
-        await this.checkGitChanges(false);
-        await this.discardAutomaticCheckpoint();
-        return response.content ?? "";
-      }
+        const response =
+          await this.model.chat({
+            messages:
+              this.context.getItems(),
+            tools: this.tools,
+          });
 
-      /**
-       * 保存 Function Calls
-       */
-      for (
-        const functionCall of
-          response.functionCalls
-      ) {
-        this.context.addFunctionCall(
-          functionCall
-        );
-      }
-
-      /**
-       * 执行 Function Calls
-       */
-      for (
-        const functionCall of
-          response.functionCalls
-      ) {
-        const result =
-          await this.executeFunctionCall(
-            functionCall
+        /**
+         * 保存 Assistant 文本
+         */
+        if (
+          response.content &&
+          response.content.trim()
+        ) {
+          this.context.addAssistantMessage(
+            response.content
           );
 
-        this.context.addFunctionCallOutput(
-          functionCall.call_id,
-          result
-        );
-      }
+          console.log(
+            "[Agent] assistant:",
+            response.content
+          );
+        }
 
-      await this.checkGitChanges(true);
+        /**
+         * 没有 Tool Call
+         */
+        if (
+          response.functionCalls.length ===
+          0
+        ) {
+          await this.checkGitChanges(false);
+          await this.discardAutomaticCheckpoint();
+          return response.content ?? "";
+        }
+
+        /**
+         * 保存 Function Calls
+         */
+        for (
+          const functionCall of
+            response.functionCalls
+        ) {
+          this.context.addFunctionCall(
+            functionCall
+          );
+        }
+
+        /**
+         * 执行 Function Calls
+         */
+        for (
+          const functionCall of
+            response.functionCalls
+        ) {
+          const result =
+            await this.executeFunctionCall(
+              functionCall
+            );
+
+          this.context.addFunctionCallOutput(
+            functionCall.call_id,
+            result
+          );
+        }
+
+        await this.checkGitChanges(true);
       }
 
       throw new Error(
@@ -200,7 +200,7 @@ export class Agent {
   /**
    * 执行一个 Function Call
    */
-  /** Create a checkpoint without making Git support mandatory. */
+  /** 创建自动检查点 */
   private async createAutomaticCheckpoint(): Promise<string | undefined> {
     const result = await this.executeInternalTool("git_checkpoint");
     if (result?.success && result.id) {
@@ -211,7 +211,7 @@ export class Agent {
     return undefined;
   }
 
-  /** Log the working tree changes after each tool batch. */
+  /** 记录工作树变化 */
   private async checkGitChanges(addToContext: boolean): Promise<void> {
     const checkpointId = this.automaticCheckpointId;
     const inspection = checkpointId
@@ -229,7 +229,7 @@ export class Agent {
     }
   }
 
-  /** Restore the run checkpoint after an unhandled Agent failure. */
+  /** 回滚自动检查点 */
   private async rollbackAutomaticCheckpoint(): Promise<void> {
     const checkpointId = this.automaticCheckpointId;
     if (!checkpointId) return;
@@ -238,7 +238,7 @@ export class Agent {
     else console.warn("[Agent] unable to roll back Git checkpoint " + checkpointId + ": " + (result?.error ?? "unknown error"));
   }
 
-  /** Release a successful run's checkpoint to avoid retaining snapshots. */
+  /** 释放成功运行的检查点以避免保留快照。 */
   private async discardAutomaticCheckpoint(): Promise<void> {
     const checkpointId = this.automaticCheckpointId;
     if (!checkpointId) return;
@@ -246,7 +246,7 @@ export class Agent {
     this.automaticCheckpointId = undefined;
   }
 
-  /** Execute a hidden lifecycle tool and tolerate unavailable Git support. */
+  /** 执行隐藏的生命周期工具并容忍不可用的 Git 支持。 */
   private async executeInternalTool(name: string, args: ToolArguments = {}): Promise<ToolResult | undefined> {
     if (!this.toolExecutor) return undefined;
     try {
@@ -258,6 +258,7 @@ export class Agent {
     return undefined;
   }
 
+  /** 执行一个 Function Call */
   private async executeFunctionCall(
     functionCall: FunctionCall
   ): Promise<string> {
