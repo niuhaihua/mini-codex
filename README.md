@@ -784,6 +784,24 @@ npm start
 
 ---
 
+### 生成 Windows exe
+
+先安装打包器：
+
+```bash
+pnpm add -D @yao-pkg/pkg
+```
+
+然后生成：
+
+```bash
+pnpm build:exe
+```
+
+产物会在 `release/mini-codex.exe`。
+
+运行时请把 `workspace/` 和对应的 `.env.<provider>` 放在 exe 同级目录。
+
 ## 16. 示例
 
 启动：

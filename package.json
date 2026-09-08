@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "description": "A minimal Codex-style AI coding agent",
   "type": "module",
+  "bin": "dist/index.js",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
+    "bundle": "pnpm exec esbuild src/index.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/bundle.cjs",
+    "build:exe": "pnpm build && pnpm bundle && pnpm exec pkg dist/bundle.cjs --targets node22-win-x64 --output release/mini-codex.exe",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -26,7 +29,9 @@
     "openai": "^7.7.0"
   },
   "devDependencies": {
+    "@yao-pkg/pkg": "^6.22.0",
     "@types/node": "^26.4.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }
