@@ -130,10 +130,10 @@ export class OpenAIModel
             }
           : {}),
       };
-    console.log(
-      "[OpenAI] request sent",
-      request
-    );
+    // console.log(
+    //   "[OpenAI] request sent",
+    //   request
+    // );
     const response =
       await this.client.responses.create(
         request,

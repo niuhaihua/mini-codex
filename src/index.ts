@@ -5,8 +5,6 @@ import {
   stdout as output,
 } from "node:process";
 
-import "dotenv/config";
-
 import { Agent } from "./agent/agent.js";
 import { OpenAIModel } from "./llm/openai.js";
 import { AnthropicModel } from "./llm/anthropic.js";
@@ -25,49 +23,37 @@ async function main(): Promise<void> {
   const curModel = config.model;
   if (!apiKey) {
     throw new Error(
-      "OPENAI_API_KEY is not configured."
+      "MODEL_API_KEY is not configured."
     );
   }
 
   /**
    * Model
    */
+  const modelConfig = {
+    apiKey,
+    model: curModel,
+    timeoutMs: config.timeoutMs,
+    ...(baseURL
+      ? {
+          baseURL,
+        }
+      : {}),
+  };
+
   let model;
 
   switch (config.provider) {
     case "openai":
-      model = new OpenAIModel({
-        apiKey,
-        model: curModel,
-        ...(baseURL
-          ? {
-              baseURL,
-            }
-          : {}),
-      });
+    case "openai-compatible":
+      model = new OpenAIModel(modelConfig);
       break;
 
     case "anthropic":
-      model = new AnthropicModel({
-        apiKey,
-        model: curModel,
-        ...(baseURL
-          ? {
-              baseURL,
-            }
-          : {}),
-      });
+      model = new AnthropicModel(modelConfig);
       break;
     case "gemini":
-      model = new GeminiModel({
-        apiKey,
-        model: curModel,
-        ...(baseURL
-          ? {
-              baseURL,
-            }
-          : {}),
-      });
+      model = new GeminiModel(modelConfig);
       break;
     default:
       throw new Error(

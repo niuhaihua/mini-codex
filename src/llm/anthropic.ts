@@ -1,3 +1,10 @@
+import Anthropic from "@anthropic-ai/sdk";
+import type {
+  ContentBlockParam,
+  MessageParam,
+  Tool,
+} from "@anthropic-ai/sdk/resources/messages/messages.js";
+
 import type {
   ContextItem,
   SystemMessage,
@@ -14,194 +21,107 @@ export interface AnthropicConfig {
   apiKey: string;
   model: string;
   baseURL?: string;
+  timeoutMs?: number;
 }
 
-interface AnthropicResponse {
-  content?: Array<{
-    type: string;
-    text?: string;
-    id?: string;
-    name?: string;
-    input?: Record<string, unknown>;
-  }>;
-}
-
-export class AnthropicModel
-  implements ModelClient
-{
-  private readonly apiKey: string;
+export class AnthropicModel implements ModelClient {
+  private readonly client: Anthropic;
   private readonly model: string;
-  private readonly baseURL: string;
 
-  constructor(
-    config: AnthropicConfig,
-  ) {
-    this.apiKey = config.apiKey;
+  constructor(config: AnthropicConfig) {
+    this.client = new Anthropic({
+      apiKey: config.apiKey,
+      ...(config.baseURL !== undefined ? { baseURL: config.baseURL } : {}),
+      timeout: config.timeoutMs ?? 600000,
+    });
     this.model = config.model;
-    this.baseURL =
-      config.baseURL ??
-      "https://api.anthropic.com";
   }
 
   async chat(params: {
     messages: ContextItem[];
     tools?: ToolDefinition[];
   }): Promise<ModelResponse> {
-    const system =
-      this.getSystemPrompt(
-        params.messages,
-      );
+    const system = this.getSystemPrompt(params.messages);
+    const messages = this.convertMessages(params.messages);
+    const tools = this.convertTools(params.tools ?? []);
 
-    const messages =
-      this.convertMessages(
-        params.messages,
-      );
+    console.log("[Anthropic] model:", this.model);
+    console.log("[Anthropic] messages:", messages.length);
+    console.log("[Anthropic] tools:", tools.length);
+    console.log("[Anthropic] sending request...");
 
-    const tools =
-      this.convertTools(
-        params.tools ?? [],
-      );
-
-    const body: Record<
-      string,
-      unknown
-    > = {
+    const response = await this.client.messages.create({
       model: this.model,
       max_tokens: 8192,
+      ...(system.length > 0 ? { system } : {}),
       messages,
-    };
+      ...(tools.length > 0 ? { tools } : {}),
+    });
 
-    if (system.length > 0) {
-      body.system = system;
-    }
-
-    if (tools.length > 0) {
-      body.tools = tools;
-    }
-
-    console.log(
-      "[Anthropic] sending request...",
-    );
-
-    const response = await fetch(
-      `${this.baseURL}/v1/messages`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-          "x-api-key": this.apiKey,
-          "anthropic-version":
-            "2023-06-01",
-        },
-        body: JSON.stringify(body),
-      },
-    );
-
-    if (!response.ok) {
-      const error =
-        await response.text();
-
-      throw new Error(
-        `Anthropic API error ${response.status}: ${error}`,
-      );
-    }
-
-    const data =
-      (await response.json()) as AnthropicResponse;
-
-    return this.parseResponse(data);
+    return this.parseResponse(response);
   }
 
-  private getSystemPrompt(
-    messages: ContextItem[],
-  ): string {
+  private getSystemPrompt(messages: ContextItem[]): string {
     return messages
       .filter(
-        (
-          item,
-        ): item is SystemMessage =>
-          "role" in item &&
-          item.role === "system",
+        (item): item is SystemMessage =>
+          "role" in item && item.role === "system",
       )
-      .map(
-        (item) => item.content,
-      )
+      .map((item) => item.content)
       .join("\n\n");
   }
 
-  private convertMessages(
-    messages: ContextItem[],
-  ): Array<{
-    role: "user" | "assistant";
-    content: unknown;
-  }> {
-    const result: Array<{
-      role: "user" | "assistant";
-      content: unknown;
-    }> = [];
+  private convertMessages(messages: ContextItem[]): MessageParam[] {
+    const result: MessageParam[] = [];
+
+    const append = (
+      role: MessageParam["role"],
+      content: ContentBlockParam,
+    ): void => {
+      const last = result[result.length - 1];
+      if (last?.role === role) {
+        if (typeof last.content === "string") {
+          last.content = [{ type: "text", text: last.content }];
+        }
+        last.content.push(content);
+        return;
+      }
+
+      result.push({ role, content: [content] });
+    };
 
     for (const item of messages) {
-      if (
-        "role" in item &&
-        item.role === "user"
-      ) {
-        result.push({
-          role: "user",
-          content: item.content,
-        });
-
+      if ("role" in item && item.role === "system") {
         continue;
       }
-
-      if (
-        "role" in item &&
-        item.role === "assistant"
-      ) {
-        result.push({
-          role: "assistant",
-          content: item.content,
+      if ("role" in item && item.role === "user") {
+        append("user", {
+          type: "text",
+          text: item.content,
         });
-
         continue;
       }
-
-      if (
-        "type" in item &&
-        item.type === "function_call"
-      ) {
-        result.push({
-          role: "assistant",
-          content: [
-            {
-              type: "tool_use",
-              id: item.call_id,
-              name: item.name,
-              input: this.parseArguments(
-                item.arguments,
-              ),
-            },
-          ],
+      if ("role" in item && item.role === "assistant") {
+        append("assistant", {
+          type: "text",
+          text: item.content,
         });
-
         continue;
       }
-
-      if (
-        "type" in item &&
-        item.type ===
-          "function_call_output"
-      ) {
-        result.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id:
-                item.call_id,
-              content: item.output,
-            },
-          ],
+      if ("type" in item && item.type === "function_call") {
+        append("assistant", {
+          type: "tool_use",
+          id: item.call_id,
+          name: item.name,
+          input: this.parseArguments(item.arguments),
+        });
+        continue;
+      }
+      if ("type" in item && item.type === "function_call_output") {
+        append("user", {
+          type: "tool_result",
+          tool_use_id: item.call_id,
+          content: item.output,
         });
       }
     }
@@ -209,98 +129,54 @@ export class AnthropicModel
     return result;
   }
 
-  private convertTools(
-    tools: ToolDefinition[],
-  ): Array<{
-    name: string;
-    description: string;
-    input_schema: unknown;
-  }> {
+  private convertTools(tools: ToolDefinition[]): Tool[] {
     return tools.map(
-      (tool) => ({
-        name: tool.name,
-        description:
-          tool.description,
-        input_schema:
-          tool.parameters,
-      }),
+      (tool) =>
+        ({
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.parameters,
+        }) as Tool,
     );
   }
 
-  private parseResponse(
-    response: AnthropicResponse,
-  ): ModelResponse {
-    const functionCalls: FunctionCall[] =
-      [];
+  private parseResponse(response: Anthropic.Message): ModelResponse {
+    const functionCalls: FunctionCall[] = [];
+    const textParts: string[] = [];
 
-    const textParts: string[] =
-      [];
-
-    for (
-      const item of
-        response.content ?? []
-    ) {
-      if (
-        item.type === "text" &&
-        item.text !== undefined
-      ) {
-        textParts.push(
-          item.text,
-        );
+    for (const item of response.content) {
+      if (item.type === "text") {
+        textParts.push(item.text);
       }
-
-      if (
-        item.type === "tool_use" &&
-        item.id !== undefined &&
-        item.name !== undefined
-      ) {
+      if (item.type === "tool_use") {
         functionCalls.push({
           type: "function_call",
           call_id: item.id,
           name: item.name,
-          arguments:
-            JSON.stringify(
-              item.input ?? {},
-            ),
+          arguments: JSON.stringify(item.input),
         });
       }
     }
 
     return {
-      content:
-        textParts.length > 0
-          ? textParts.join("")
-          : null,
-
+      content: textParts.length > 0 ? textParts.join("") : null,
       functionCalls,
     };
   }
 
-  private parseArguments(
-    value: string,
-  ): Record<
-    string,
-    unknown
-  > {
+  private parseArguments(value: string): Record<string, unknown> {
     try {
-      const parsed =
-        JSON.parse(value);
-
+      const parsed: unknown = JSON.parse(value);
       if (
         parsed !== null &&
-        typeof parsed ===
-          "object" &&
+        typeof parsed === "object" &&
         !Array.isArray(parsed)
       ) {
-        return parsed as Record<
-          string,
-          unknown
-        >;
+        return parsed as Record<string, unknown>;
       }
     } catch {
-      // ignore
+      // Keep malformed tool arguments from breaking the next request.
     }
-
     return {};
   }
 }
