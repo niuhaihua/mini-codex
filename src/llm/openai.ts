@@ -130,7 +130,10 @@ export class OpenAIModel
             }
           : {}),
       };
-
+    console.log(
+      "[OpenAI] request sent",
+      request
+    );
     const response =
       await this.client.responses.create(
         request,
@@ -138,13 +141,15 @@ export class OpenAIModel
 
     console.log(
       "[OpenAI] response received",
+      response
     );
+
     console.log(
       "[OpenAI] output items:",
       response.output,
     );
     console.log(
-      "[OpenAI] output items:",
+      "[OpenAI] output items length:",
       response.output.length,
     );
 
