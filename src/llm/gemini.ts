@@ -1,7 +1,11 @@
+import OpenAI from "openai";
 import type {
-  ContextItem,
-  SystemMessage,
-} from "../agent/context.js";
+  ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from "openai/resources/chat/completions/completions";
+
+import type { ContextItem } from "../agent/context.js";
 
 import type {
   FunctionCall,
@@ -14,243 +18,104 @@ export interface GeminiConfig {
   apiKey: string;
   model: string;
   baseURL?: string;
+  timeoutMs?: number;
 }
 
-interface GeminiPart {
-  text?: string;
-
-  functionCall?: {
-    name: string;
-    args?: Record<
-      string,
-      unknown
-    >;
-  };
-
-  functionResponse?: {
-    name: string;
-    response: Record<
-      string,
-      unknown
-    >;
-  };
-}
-
-interface GeminiContent {
-  role: "user" | "model";
-  parts: GeminiPart[];
-}
-
-interface GeminiResponse {
-  candidates?: Array<{
-    content?: {
-      parts?: GeminiPart[];
-    };
-  }>;
-}
-
-export class GeminiModel
-  implements ModelClient
-{
-  private readonly apiKey: string;
+/**
+ * Gemini-compatible model client using the OpenAI Chat Completions API.
+ *
+ * The provider name remains "gemini" so existing CLI configuration keeps
+ * working, while the endpoint must implement /chat/completions.
+ */
+export class GeminiModel implements ModelClient {
+  private readonly client: OpenAI;
   private readonly model: string;
-  private readonly baseURL: string;
 
-  constructor(
-    config: GeminiConfig,
-  ) {
-    this.apiKey = config.apiKey;
+  constructor(config: GeminiConfig) {
+    this.client = new OpenAI({
+      apiKey: config.apiKey,
+      ...(config.baseURL !== undefined
+        ? {
+            baseURL: config.baseURL.replace(/\/+$/, ""),
+          }
+        : {}),
+      timeout: config.timeoutMs ?? 600000,
+    });
     this.model = config.model;
-
-    this.baseURL =
-      config.baseURL ??
-      "https://generativelanguage.googleapis.com/v1beta";
   }
 
   async chat(params: {
     messages: ContextItem[];
     tools?: ToolDefinition[];
   }): Promise<ModelResponse> {
-    const systemInstruction =
-      this.getSystemPrompt(
-        params.messages,
-      );
+    const messages = this.convertMessages(params.messages);
+    const tools = this.convertTools(params.tools ?? []);
 
-    const contents =
-      this.convertMessages(
-        params.messages,
-      );
-
-    const body: Record<
-      string,
-      unknown
-    > = {
-      contents,
+    const request: ChatCompletionCreateParamsNonStreaming = {
+      model: this.model,
+      messages,
+      ...(tools.length > 0 ? { tools } : {}),
     };
 
-    if (
-      systemInstruction.length > 0
-    ) {
-      body.systemInstruction = {
-        parts: [
-          {
-            text: systemInstruction,
-          },
-        ],
-      };
-    }
-
-    if (
-      params.tools !== undefined &&
-      params.tools.length > 0
-    ) {
-      body.tools = [
-        {
-          functionDeclarations:
-            this.convertTools(
-              params.tools,
-            ),
-        },
-      ];
-    }
-
+    console.log("[Gemini/OpenAI] model:", this.model);
     console.log(
-      "[Gemini] sending request...",
+      "[Gemini/OpenAI] messages:",
+      messages.length,
+    );
+    console.log(
+      "[Gemini/OpenAI] tools:",
+      tools.length,
+    );
+    console.log(
+      "[Gemini/OpenAI] sending chat.completions.create request...",
     );
 
-    const response = await fetch(
-      `${this.baseURL}/models/${this.model}:generateContent?key=${encodeURIComponent(
-        this.apiKey,
-      )}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify(body),
-      },
-    );
-
-    if (!response.ok) {
-      const error =
-        await response.text();
-
-      throw new Error(
-        `Gemini API error ${response.status}: ${error}`,
+    const response =
+      await this.client.chat.completions.create(
+        request,
       );
-    }
 
-    const data =
-      (await response.json()) as GeminiResponse;
-
-    return this.parseResponse(data);
-  }
-
-  private getSystemPrompt(
-    messages: ContextItem[],
-  ): string {
-    return messages
-      .filter(
-        (
-          item,
-        ): item is SystemMessage =>
-          "role" in item &&
-          item.role === "system",
-      )
-      .map(
-        (item) => item.content,
-      )
-      .join("\n\n");
+    return this.parseResponse(response);
   }
 
   private convertMessages(
     messages: ContextItem[],
-  ): GeminiContent[] {
-    const result: GeminiContent[] =
+  ): ChatCompletionMessageParam[] {
+    const result: ChatCompletionMessageParam[] =
       [];
 
     for (const item of messages) {
-      if (
-        "role" in item &&
-        item.role === "user"
-      ) {
+      if ("role" in item) {
         result.push({
-          role: "user",
-          parts: [
-            {
-              text: item.content,
-            },
-          ],
+          role: item.role,
+          content: item.content,
         });
-
         continue;
       }
 
-      if (
-        "role" in item &&
-        item.role === "assistant"
-      ) {
+      if (item.type === "function_call") {
         result.push({
-          role: "model",
-          parts: [
+          role: "assistant",
+          content: null,
+          tool_calls: [
             {
-              text: item.content,
-            },
-          ],
-        });
-
-        continue;
-      }
-
-      if (
-        "type" in item &&
-        item.type === "function_call"
-      ) {
-        result.push({
-          role: "model",
-          parts: [
-            {
-              functionCall: {
+              id: item.call_id,
+              type: "function",
+              function: {
                 name: item.name,
-                args:
-                  this.parseArguments(
-                    item.arguments,
-                  ),
+                arguments: item.arguments,
               },
             },
           ],
         });
-
         continue;
       }
 
-      if (
-        "type" in item &&
-        item.type ===
-          "function_call_output"
-      ) {
-        const parsed =
-          this.parseToolOutput(
-            item.output,
-          );
-
-        result.push({
-          role: "user",
-          parts: [
-            {
-              functionResponse: {
-                name:
-                  this.getFunctionName(
-                    messages,
-                    item.call_id,
-                  ),
-                response: parsed,
-              },
-            },
-          ],
-        });
-      }
+      result.push({
+        role: "tool",
+        tool_call_id: item.call_id,
+        content: item.output,
+      });
     }
 
     return result;
@@ -258,154 +123,45 @@ export class GeminiModel
 
   private convertTools(
     tools: ToolDefinition[],
-  ): Array<{
-    name: string;
-    description: string;
-    parametersJsonSchema: unknown;
-  }> {
-    return tools.map(
-      (tool) => ({
+  ): ChatCompletionTool[] {
+    return tools.map((tool) => ({
+      type: "function",
+      function: {
         name: tool.name,
-        description:
-          tool.description,
-        parametersJsonSchema:
-          tool.parameters,
-      }),
-    );
+        description: tool.description,
+        parameters: tool.parameters,
+        ...(tool.strict !== undefined
+          ? { strict: tool.strict }
+          : {}),
+      },
+    }));
   }
 
   private parseResponse(
-    response: GeminiResponse,
+    response: OpenAI.Chat.Completions.ChatCompletion,
   ): ModelResponse {
-    const functionCalls: FunctionCall[] =
-      [];
+    const message = response.choices[0]?.message;
+    const functionCalls: FunctionCall[] = [];
 
-    const textParts: string[] =
-      [];
-
-    const parts =
-      response.candidates?.[0]
-        ?.content?.parts ?? [];
-
-    for (const part of parts) {
-      if (
-        part.text !== undefined
-      ) {
-        textParts.push(
-          part.text,
-        );
+    for (const toolCall of message?.tool_calls ?? []) {
+      if (toolCall.type !== "function") {
+        continue;
       }
 
-      if (
-        part.functionCall !==
-          undefined
-      ) {
-        const call =
-          part.functionCall;
-
-        const callId =
-          `gemini_${Date.now()}_${Math.random()
-            .toString(36)
-            .slice(2)}`;
-
-        functionCalls.push({
-          type: "function_call",
-          call_id: callId,
-          name: call.name,
-          arguments:
-            JSON.stringify(
-              call.args ?? {},
-            ),
-        });
-      }
+      functionCalls.push({
+        type: "function_call",
+        call_id: toolCall.id,
+        name: toolCall.function.name,
+        arguments: toolCall.function.arguments,
+      });
     }
 
     return {
       content:
-        textParts.length > 0
-          ? textParts.join("")
+        typeof message?.content === "string"
+          ? message.content
           : null,
-
       functionCalls,
     };
-  }
-
-  private parseArguments(
-    value: string,
-  ): Record<
-    string,
-    unknown
-  > {
-    try {
-      const parsed =
-        JSON.parse(value);
-
-      if (
-        parsed !== null &&
-        typeof parsed ===
-          "object" &&
-        !Array.isArray(parsed)
-      ) {
-        return parsed as Record<
-          string,
-          unknown
-        >;
-      }
-    } catch {
-      // ignore
-    }
-
-    return {};
-  }
-
-  private parseToolOutput(
-    output: string,
-  ): Record<
-    string,
-    unknown
-  > {
-    try {
-      const parsed =
-        JSON.parse(output);
-
-      if (
-        parsed !== null &&
-        typeof parsed ===
-          "object" &&
-        !Array.isArray(parsed)
-      ) {
-        return parsed as Record<
-          string,
-          unknown
-        >;
-      }
-
-      return {
-        result: parsed,
-      };
-    } catch {
-      return {
-        result: output,
-      };
-    }
-  }
-
-  private getFunctionName(
-    messages: ContextItem[],
-    callId: string,
-  ): string {
-    for (
-      const item of messages
-    ) {
-      if (
-        "type" in item &&
-        item.type === "function_call" &&
-        item.call_id === callId
-      ) {
-        return item.name;
-      }
-    }
-
-    return "unknown_function";
   }
 }
