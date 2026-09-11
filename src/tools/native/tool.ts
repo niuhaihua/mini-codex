@@ -1,4 +1,4 @@
-import { listFiles } from "./listFiles.js";
+﻿import { listFiles } from "./listFiles.js";
 import { readFile } from "./readFile.js";
 import { writeFile } from "./writeFile.js";
 import { editFile } from "./editFile.js";
@@ -18,12 +18,11 @@ import {
 } from "./gitCheckpoint.js";
 import { gitRollback } from "./gitRollback.js";
 
-import type { ToolDefinition } from "../llm/types.js";
+import type { ToolDefinition } from "../../llm/types.js";
 import type {
   ToolArguments,
-  ToolExecutor,
-} from "../agent/agent.js";
-import type { Workspace } from "../workspace/workspace.js";
+} from "../../agent/agent.js";
+import type { Workspace } from "../../workspace/workspace.js";
 
 /**
  * Tool 函数
@@ -476,30 +475,3 @@ export const toolDefinitions: ToolDefinition[] = [
   },
 ];
 
-/**
- * 创建 Tool Executor
- */
-export function createToolExecutor(
-  workspace: Workspace
-): ToolExecutor {
-  const toolFunctions =
-    createToolRegistry(workspace);
-
-  return {
-    async execute(
-      name: string,
-      args: ToolArguments
-    ): Promise<string> {
-      const tool =
-        toolFunctions[name];
-
-      if (!tool) {
-        throw new Error(
-          `未知工具：${name}`
-        );
-      }
-
-      return await tool(args);
-    },
-  };
-}

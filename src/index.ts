@@ -13,9 +13,14 @@ import { Workspace } from "./workspace/workspace.js";
 import { config } from "./config.js";
 
 import {
-  toolDefinitions,
-  createToolExecutor,
-} from "./tools/index.js";
+  createNativeToolsets,
+} from "./tools/native/index.js";
+import { ToolRegistry } from "./tools/registry.js";
+import {
+  createGitHubMcpConfigFromEnv,
+  GitHubMcpClient,
+  McpClientManager,
+} from "./tools/mcp/index.js";
 
 async function main(): Promise<void> {
   const apiKey = config.apiKey;
@@ -78,10 +83,24 @@ async function main(): Promise<void> {
    *
    * 将 Workspace 注入 Tool。
    */
-  const toolExecutor =
-    createToolExecutor(
-      workspace
-    );
+  const toolRegistry = new ToolRegistry();
+  for (const nativeToolset of createNativeToolsets(workspace)) {
+    toolRegistry.registerNativeTools(nativeToolset);
+  }
+
+  const mcpManager = new McpClientManager();
+
+  const githubMcpConfig = createGitHubMcpConfigFromEnv();
+  if (githubMcpConfig) {
+    const githubMcp = new GitHubMcpClient(githubMcpConfig);
+    await githubMcp.connect();
+    mcpManager.registerServer({
+      name: "github",
+      provider: githubMcp,
+    });
+  }
+
+  toolRegistry.registerMcpManager(mcpManager);
 
   /**
    * Agent
@@ -89,8 +108,8 @@ async function main(): Promise<void> {
   const agent =
     new Agent({
       model,
-      tools: toolDefinitions,
-      toolExecutor,
+      tools: toolRegistry.getDefinitions(),
+      toolExecutor: toolRegistry,
     });
 
   /**
@@ -192,6 +211,7 @@ async function main(): Promise<void> {
     }
   } finally {
     rl.close();
+    await mcpManager.close();
   }
 }
 

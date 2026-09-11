@@ -1,1036 +1,908 @@
 # Mini Codex
 
-一个基于 **TypeScript + Node.js + OpenAI Responses API** 实现的轻量级 Coding Agent。
+Mini Codex 是一个使用 TypeScript、Node.js、LLM Tool Calling 和 Model Context Protocol（MCP）实现的轻量级 AI Coding Agent。
 
-Mini Codex 的核心目标是理解用户的自然语言指令，并通过 LLM 自动调用文件系统和命令执行工具完成开发任务。
+它通过自然语言接收开发任务，由 LLM 决定是否调用工具。工具可以来自两类来源：
 
-目前已经支持：
+- Native Tools：项目内置的 File、Git、Shell 工具。
+- MCP Tools：由 MCP Server 提供的外部工具，目前已完成 GitHub MCP 接入。
 
-* 📁 文件目录浏览
-* 📖 文件读取
-* ✍️ 文件创建与写入
-* 📝 文件内容编辑
-* 🗑️ 文件删除
-* 🔎 文件内容搜索
-* 💻 Shell / CMD 命令执行
-* Git 状态、diff、log 与 commit
-* Git checkpoint / rollback
-* Agent 自动检查修改，并在异常时自动回滚
-* 🛡️ Workspace 工作区路径隔离
-* 🔄 Agent Tool Calling 循环
-* 🤖 OpenAI Responses API
-* 🖥️ CLI 交互模式
+Mini Codex 默认只允许文件工具访问项目根目录下的 `workspace/`，适合用作本地代码检查、修改、命令执行和 Git 辅助工具。
 
----
+## 功能概览
 
-## 1. 项目架构
+- 交互式 CLI
+- 多轮 Agent Tool Calling
+- 文件和目录浏览
+- 文件读取、创建、覆盖、精确文本替换和删除
+- 工作区文件内容搜索
+- 在工作区根目录执行 Shell/CMD 命令
+- Git status、diff、log 和 commit
+- Git checkpoint、变更检查和 rollback
+- OpenAI Responses API
+- OpenAI-compatible Responses API
+- Anthropic Messages API
+- 通过 OpenAI Chat Completions 兼容接口接入 Gemini
+- MCP 外部工具接入
+- GitHub 官方 MCP Server
+- TypeScript 类型检查和构建
+- Node.js bundle 构建
+- Windows x64 exe 打包
 
-整体执行流程：
+## 架构
 
-```text
-                    User
-                     │
-                     ▼
-                CLI / index.ts
-                     │
-                     ▼
-                  Agent
-                     │
-                     ▼
-             OpenAI Responses API
-                     │
-                     ▼
-               Function Call
-                     │
-                     ▼
-              Tool Executor
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-          ▼                     ▼
-      Workspace              Tools
-          │                     │
-          │          ┌──────────┼──────────┐
-          │          │          │          │
-          ▼          ▼          ▼          ▼
-       路径安全    文件操作    搜索       命令
-          │
-          ▼
-      File System
-          │
-          ▼
-      Tool Result
-          │
-          └──────────────► Agent
-                              │
-                              ▼
-                            LLM
-```
-
-Agent 的基本循环：
+当前项目的工具架构如下：
 
 ```text
-User
- ↓
-LLM
- ↓
-是否需要 Tool？
- ├── 否 → Final Answer
- │
- └── 是
-      ↓
-   Function Call
-      ↓
-    Tool
-      ↓
- Tool Result
-      ↓
-     LLM
-      ↓
-     ...
+                              ToolRegistry
+                              /          \
+                             /            \
+                   Native Tools          MCP Tools
+                  /       |       \       /       \
+               File      Git     Shell  GitHub   Database
+                                         MCP       MCP
+                                           \       /
+                                        McpClientManager
+                                               |
+                                           MCP Servers
 ```
 
----
-
-## 2. 技术栈
-
-| 技术                   | 用途                      |
-| -------------------- | ----------------------- |
-| TypeScript           | 项目主要开发语言                |
-| Node.js              | Agent 运行环境              |
-| OpenAI SDK           | 调用 OpenAI Responses API |
-| OpenAI Responses API | LLM 与 Tool Calling      |
-| dotenv               | 环境变量配置                  |
-| readline             | CLI 交互                  |
-| Node.js fs/promises  | 文件系统操作                  |
-| tsx                  | TypeScript 开发运行         |
-| pnpm / npm           | 包管理                     |
-
----
-
-## 3. 项目结构
+目前已实现：
 
 ```text
-mini-codex/
-│
-├── src/
-│   │
-│   ├── agent/
-│   │   ├── agent.ts
-│   │   ├── context.ts
-│   │   └── prompt.ts
-│   │
-│   ├── llm/
-│   │   ├── openai.ts
-│   │   └── types.ts
-│   │
-│   ├── tools/
-│   │   ├── index.ts
-│   │   ├── tool.ts
-│   │   ├── listFiles.ts
-│   │   ├── readFile.ts
-│   │   ├── writeFile.ts
-│   │   ├── editFile.ts
-│   │   ├── deleteFile.ts
-│   │   ├── searchFiles.ts
-│   │   └── runCommand.ts
-│   │
-│   ├── workspace/
-│   │   └── workspace.ts
-│   │
-│   └── index.ts
-│
-├── workspace/
-│   └── ...
-│
-├── .env
-├── package.json
-├── tsconfig.json
-└── README.md
+ToolRegistry
+├── Native Tools
+│   ├── File
+│   ├── Git
+│   └── Shell
+└── MCP Tools
+    └── McpClientManager
+        └── GitHub MCP
 ```
 
----
+Database MCP 在架构上预留了扩展位置，但当前项目还没有内置 Database MCP Client。
 
-## 4. Workspace
-
-Mini Codex 不直接允许 Agent 任意操作项目文件。
-
-所有文件操作都通过 `Workspace` 进行路径解析。
-
-```ts
-const workspace = new Workspace(
-  path.resolve(process.cwd(), "workspace")
-);
-```
-
-例如：
+### 一次任务的执行流程
 
 ```text
-mini-codex/
-├── src/
-├── workspace/
-│   ├── src/
-│   │   └── index.ts
-│   └── package.json
-└── package.json
+用户输入自然语言请求
+        |
+        v
+Agent 保存 User Message
+        |
+        v
+ModelClient 调用模型
+        |
+        +---- 没有 Tool Call ----> 返回最终答案
+        |
+        v
+模型返回 Function Call
+        |
+        v
+ToolRegistry 根据工具名称路由
+        |
+        +---- Native Tool ----> File / Git / Shell
+        |
+        +---- MCP Tool -------> McpClientManager
+                                      |
+                                      v
+                              GitHub MCP Server
+        |
+        v
+Tool Result 写回 Agent Context
+        |
+        v
+再次调用模型，直到任务完成
 ```
 
-Agent 请求：
+Agent 默认最多执行 20 轮迭代。超过最大迭代次数时，Agent 会抛出错误，并尝试回滚本次任务创建的自动 Git checkpoint。
 
-```json
-{
-  "path": "src/index.ts"
-}
+## 环境要求
+
+- Node.js 22 或更高版本
+- pnpm 10，或 npm
+- 至少一个模型 provider 的 API Key
+- 如果使用 GitHub MCP：
+  - 远程 HTTP 模式需要 GitHub Personal Access Token
+  - stdio 模式需要 Docker 或其他可启动 MCP Server 的命令
+
+## 安装
+
+使用 pnpm：
+
+```bash
+pnpm install
 ```
 
-最终访问：
+也可以使用 npm：
+
+```bash
+npm install
+```
+
+项目声明的包管理器版本是：
 
 ```text
-mini-codex/workspace/src/index.ts
+pnpm@10.32.1
 ```
 
-### Workspace 路径安全
+## 配置模型 Provider
 
-`Workspace.resolve()` 会检查路径是否位于 Workspace 内部。
-
-例如：
-
-```text
-src/index.ts
-```
-
-允许访问。
-
-而：
-
-```text
-../package.json
-```
-
-会被拒绝。
-
-核心逻辑：
-
-```ts
-resolve(relativePath: string): string {
-  const absolutePath = path.resolve(
-    this.root,
-    relativePath,
-  );
-
-  this.ensureInsideWorkspace(
-    absolutePath,
-  );
-
-  return absolutePath;
-}
-```
-
-因此 Agent 无法通过普通文件 Tool 越过 Workspace 操作外部文件。
-
----
-
-## 5. Tools
-
-目前 Mini Codex 支持 13 个公开 Tool。
-
-### 5.1 list_files
-
-列出目录中的文件和目录。
-
-调用参数：
-
-```json
-{
-  "path": "src"
-}
-```
-
-功能：
-
-```text
-workspace/src/
-├── index.ts
-├── agent.ts
-└── tools/
-```
-
-如果不传 `path`，默认使用 Workspace 根目录。
-
----
-
-### 5.2 read_file
-
-读取文件内容。
-
-调用参数：
-
-```json
-{
-  "path": "src/index.ts"
-}
-```
-
-返回文件文本内容。
-
----
-
-### 5.3 write_file
-
-创建或者覆盖文件。
-
-调用参数：
-
-```json
-{
-  "path": "src/test.ts",
-  "content": "console.log('hello');"
-}
-```
-
-如果父目录不存在，会自动创建。
-
----
-
-### 5.4 edit_file
-
-修改文件中的指定文本。
-
-调用参数：
-
-```json
-{
-  "path": "src/index.ts",
-  "oldText": "console.log('hello');",
-  "newText": "console.log('Hello Mini Codex');"
-}
-```
-
-为了避免 Agent 误修改多个位置，目前要求 `oldText` 在文件中必须只出现一次。
-
-如果出现多次：
-
-```text
-oldText 在文件中出现了 3 次，无法确定应该修改哪一处
-```
-
-Tool 会返回错误，Agent 可以根据错误重新读取文件并尝试修改。
-
----
-
-### 5.5 delete_file
-
-删除指定文件。
-
-调用参数：
-
-```json
-{
-  "path": "src/test.ts"
-}
-```
-
-如果目标不是文件，则返回错误。
-
----
-
-### 5.6 search_files
-
-搜索 Workspace 中的文件内容。
-
-调用参数：
-
-```json
-{
-  "query": "Mini Codex",
-  "path": "src"
-}
-```
-
-返回匹配文件、行号以及匹配内容。
-
-例如：
-
-```json
-[
-  {
-    "path": "src/index.ts",
-    "line": 10,
-    "content": "console.log('Mini Codex');"
-  }
-]
-```
-
----
-
-### 5.7 run_command
-
-在 Workspace 根目录执行命令。
-
-调用参数：
-
-```json
-{
-  "command": "npm test"
-}
-```
-
-Windows 下使用：
-
-```text
-cmd.exe
-```
-
-Linux / macOS 下使用：
-
-```text
-/bin/bash
-```
-
-同时设置：
-
-```text
-cwd = workspace.getRoot()
-```
-
-因此命令默认在 Workspace 中执行。
-
-例如：
-
-```text
-You:
-执行 node -v
-```
-
-Agent 可以调用：
-
-```text
-run_command
-```
-
-最终相当于在：
-
-```text
-mini-codex/workspace/
-```
-
-中执行命令。
-
----
-
-### 5.8 git_status
-
-显示当前分支和工作区状态，等价于 `git status --short --branch`。
-
----
-
-### 5.9 git_diff
-
-显示工作区 diff。传入 `{"staged": true}` 时显示已暂存的 diff。
-
----
-
-### 5.10 git_log
-
-显示最近的 Git 提交记录。`maxCount` 默认值为 10，取值范围为 1-100。
-
----
-
-### 5.11 git_commit
-
-使用 `message` 提交已经暂存的修改。该 Tool 不会自动执行 `git add`。
-
----
-
-### 5.12 git_checkpoint
-
-创建当前 Git 状态的临时 checkpoint，并返回 `checkpointId`。
-
----
-
-### 5.13 git_rollback
-
-使用 `checkpointId` 恢复 checkpoint。该操作会丢弃 checkpoint 创建之后的修改，但会保留 checkpoint 创建之前已有的 staged、unstaged 和 untracked 文件。
-
----
-
-## 6. Tool 注入
-
-Tools 并不是直接使用全局文件系统。
-
-启动 Agent 时，将 Workspace 注入 Tool：
-
-```ts
-const workspace = new Workspace(
-  path.resolve(
-    process.cwd(),
-    "workspace"
-  )
-);
-
-const toolExecutor =
-  createToolExecutor(
-    workspace
-  );
-
-const agent = new Agent({
-  model,
-  tools: toolDefinitions,
-  toolExecutor,
-});
-```
-
-因此依赖关系为：
-
-```text
-index.ts
-   │
-   ▼
-Workspace
-   │
-   ▼
-createToolExecutor()
-   │
-   ▼
-Tools
-   │
-   ▼
-File System
-```
-
-这种设计可以让 Tool 不需要自己管理 Workspace 路径。
-
----
-
-## 7. Agent
-
-`Agent` 是整个项目的核心。
-
-它负责：
-
-1. 接收用户任务
-2. 保存 Context
-3. 调用 LLM
-4. 判断是否存在 Function Call
-5. 执行 Tool
-6. 保存 Tool Result
-7. 再次调用 LLM
-8. 直到模型返回最终答案
-
-核心循环：
-
-```ts
-for (
-  let iteration = 0;
-  iteration < maxIterations;
-  iteration++
-) {
-  const response =
-    await this.model.chat({
-      messages:
-        this.context.getItems(),
-      tools: this.tools,
-    });
-
-  // Function Call
-  // ↓
-  // Execute Tool
-  // ↓
-  // Add Tool Result
-}
-```
-
-默认最大循环次数：
-
-```ts
-maxIterations = 20
-```
-
-防止 Agent 因为异常情况无限调用 Tool。
-
-### 自动检查与 Git checkpoint
-
-如果 Workspace 位于 Git 仓库中，Agent 会在每次任务开始时创建临时 checkpoint。每批 Tool 执行完成后，Agent 会检查 checkpoint 以来的增量 diff，并将检查摘要加入下一轮 Context，供模型复核修改。
-
-任务正常完成后 checkpoint 会自动释放；如果模型调用失败、Tool 执行抛出异常或超过最大循环次数，Agent 会自动 rollback 到任务开始前的状态。任务开始前用户已有的修改会被保留。
-
----
-
-## 8. Context
-
-`AgentContext` 负责保存 Agent 当前对话状态。
-
-支持：
-
-```text
-SystemMessage
-UserMessage
-AssistantMessage
-FunctionCall
-FunctionCallOutput
-```
-
-完整流程：
-
-```text
-System
- ↓
-User
- ↓
-Assistant
- ↓
-Function Call
- ↓
-Function Call Output
- ↓
-Assistant
- ↓
-...
-```
-
-例如：
-
-```text
-User:
-读取 src/index.ts
-
-Assistant:
-Function Call → read_file
-
-Tool:
-返回文件内容
-
-Assistant:
-根据文件内容继续分析
-```
-
-Context 会将这些信息全部保存下来，使下一次 LLM 请求能够看到之前的 Tool 调用和结果。
-
----
-
-## 9. OpenAI Responses API
-
-项目通过 `OpenAIModel` 对 OpenAI SDK 进行封装。
-
-Agent 不直接依赖 OpenAI SDK，而是依赖：
-
-```ts
-ModelClient
-```
-
-接口：
-
-```ts
-export interface ModelClient {
-  chat(params: {
-    messages: ContextItem[];
-    tools?: ToolDefinition[];
-  }): Promise<ModelResponse>;
-}
-```
-
-因此 Agent 与具体模型服务解耦。
-
-当前实现：
-
-```text
-Agent
- ↓
-ModelClient
- ↓
-OpenAIModel
- ↓
-OpenAI Responses API
-```
-
-未来可以替换成其他兼容实现：
-
-```text
-Agent
- │
- └── ModelClient
-       ├── OpenAIModel
-       ├── AzureOpenAIModel
-       ├── ClaudeModel
-       └── OtherModel
-```
-
----
-
-## 10. 环境变量
-
-启动时可通过第一个命令行参数选择 provider，默认使用 `openai`。程序会加载对应的 `.env.<provider>` 文件：
+启动命令的第一个非选项参数用于选择 provider。如果不传参数，默认使用 `openai`。
 
 ```bash
 pnpm dev -- openai
+pnpm dev -- openai-compatible
 pnpm dev -- anthropic
 pnpm dev -- gemini
 ```
 
-例如 `.env.openai`：
+程序会加载对应的环境文件：
+
+```text
+.env.openai
+.env.openai-compatible
+.env.anthropic
+.env.gemini
+```
+
+例如，使用 OpenAI：
 
 ```env
 MODEL_PROVIDER=openai
 MODEL_API_KEY=your_api_key
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_NAME=gpt-5
+MODEL_TIMEOUT_MS=600000
 ```
 
-Anthropic 和 Gemini 使用各自的 `.env.anthropic`、`.env.gemini` 文件，并填写相同的四个变量。
+### 模型环境变量
 
-仓库通过 `.gitignore` 中的 `.env*` 规则忽略所有环境文件。若某个 `.env` 文件之前已经被 Git 跟踪，需要从索引移除，但不会删除本地文件：
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `MODEL_PROVIDER` | 是 | 无 | `openai`、`openai-compatible`、`anthropic` 或 `gemini` |
+| `MODEL_API_KEY` | 是 | 无 | 模型服务 API Key |
+| `MODEL_BASE_URL` | 是 | 无 | 模型服务 Base URL |
+| `MODEL_NAME` | 是 | 无 | 模型名称 |
+| `MODEL_TIMEOUT_MS` | 否 | `600000` | 请求超时时间，单位为毫秒 |
+
+当前 `src/config.ts` 会对 `MODEL_PROVIDER`、`MODEL_API_KEY`、`MODEL_BASE_URL` 和 `MODEL_NAME` 做必填校验。如果配置文件不存在，程序会在启动阶段直接报错。
+
+### Provider 说明
+
+#### `openai`
+
+使用 OpenAI Responses API：
+
+```text
+Agent -> OpenAIModel -> OpenAI Responses API
+```
+
+示例：
+
+```env
+MODEL_PROVIDER=openai
+MODEL_API_KEY=your_openai_api_key
+MODEL_BASE_URL=https://api.openai.com/v1
+MODEL_NAME=gpt-5
+```
+
+#### `openai-compatible`
+
+使用 OpenAI Responses API 格式，适合兼容该接口的第三方模型服务。
+
+```env
+MODEL_PROVIDER=openai-compatible
+MODEL_API_KEY=your_api_key
+MODEL_BASE_URL=https://your-compatible-service.example/v1
+MODEL_NAME=your-model
+```
+
+#### `anthropic`
+
+使用 Anthropic Messages API：
+
+```env
+MODEL_PROVIDER=anthropic
+MODEL_API_KEY=your_anthropic_api_key
+MODEL_BASE_URL=https://api.anthropic.com
+MODEL_NAME=claude-sonnet-4-5
+```
+
+#### `gemini`
+
+当前 Gemini 客户端通过 OpenAI Chat Completions 兼容接口工作，因此 `MODEL_BASE_URL` 必须指向一个提供 `/chat/completions` 的兼容端点：
+
+```env
+MODEL_PROVIDER=gemini
+MODEL_API_KEY=your_gemini_api_key
+MODEL_BASE_URL=https://your-gemini-compatible-service.example/v1
+MODEL_NAME=gemini-2.5-pro
+```
+
+## Workspace
+
+Agent 的文件工具和命令工具围绕 `workspace/` 工作目录运行：
+
+```text
+mini-codex/
+├── src/
+├── workspace/
+├── package.json
+└── README.md
+```
+
+运行时，工作区根目录解析为：
+
+```text
+<项目根目录>/workspace
+```
+
+如果用户要求读取：
+
+```json
+{
+  "path": "src/index.ts"
+}
+```
+
+实际访问路径是：
+
+```text
+<项目根目录>/workspace/src/index.ts
+```
+
+### 路径隔离
+
+文件工具通过 `Workspace.resolve()` 将相对路径解析到工作区根目录，并拒绝越过工作区的路径：
+
+```text
+允许：
+src/index.ts
+packages/app/package.json
+
+拒绝：
+../package.json
+../../secret.txt
+```
+
+运行前请确认：
+
+1. `workspace/` 目录存在。
+2. 需要 Agent 操作的项目位于 `workspace/` 内。
+3. 不要把 API Key 或其他敏感文件放入会被 Agent 读取的工作区，除非这是明确需求。
+
+## ToolRegistry
+
+`ToolRegistry` 是 Agent 唯一使用的工具入口，负责两件事：
+
+1. 汇总所有工具定义，交给 LLM。
+2. 根据工具名称路由实际执行逻辑。
+
+注册流程如下：
+
+```text
+createNativeToolsets(workspace)
+        |
+        v
+ToolRegistry.registerNativeTools(...)
+        |
+        v
+GitHubMcpClient.connect()
+        |
+        v
+McpClientManager.registerServer(...)
+        |
+        v
+ToolRegistry.registerMcpManager(...)
+        |
+        v
+Agent({
+  tools: toolRegistry.getDefinitions(),
+  toolExecutor: toolRegistry
+})
+```
+
+Native Tool 和 MCP Tool 都转换为统一的 `ToolDefinition`：
+
+```ts
+interface ToolDefinition {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: JsonSchema;
+  strict?: boolean;
+}
+```
+
+当 Agent 执行工具时：
+
+```text
+Agent
+  -> ToolRegistry.execute(name, args)
+  -> Native Tool 或 McpClientManager
+  -> 返回字符串结果
+```
+
+ToolRegistry 会拒绝重复工具名称，避免不同工具覆盖同一个路由。
+
+## Native Tools
+
+Native Tools 位于：
+
+```text
+src/tools/native/
+```
+
+它们分为三个类别：
+
+### File
+
+| Tool | 说明 |
+| --- | --- |
+| `list_files` | 列出目录中的文件和子目录 |
+| `read_file` | 读取文件内容 |
+| `write_file` | 创建或覆盖文件 |
+| `edit_file` | 替换文件中唯一匹配的文本 |
+| `delete_file` | 删除文件 |
+| `search_files` | 搜索工作区文件内容 |
+
+### Git
+
+| Tool | 说明 |
+| --- | --- |
+| `git_status` | 查看当前分支和工作区状态 |
+| `git_diff` | 查看 unstaged 或 staged diff |
+| `git_log` | 查看最近的 Git 提交 |
+| `git_commit` | 提交已暂存的修改 |
+| `git_checkpoint` | 创建当前 Git 状态的 checkpoint |
+| `git_rollback` | 恢复指定 checkpoint |
+
+### Shell
+
+| Tool | 说明 |
+| --- | --- |
+| `run_command` | 在 `workspace/` 根目录执行命令 |
+
+当前本地工具定义由 `src/tools/native/tool.ts` 提供，再由 `src/tools/native/native.ts` 按 File、Git、Shell 分类。
+
+### `edit_file` 的唯一匹配规则
+
+`edit_file` 要求 `oldText` 在目标文件中恰好出现一次：
+
+- 出现 0 次：工具返回未找到错误。
+- 出现 1 次：执行替换。
+- 出现多次：工具拒绝修改，避免修改错误位置。
+
+### `git_commit` 的暂存规则
+
+`git_commit` 不会自动执行 `git add`。它只提交已经 staged 的内容，因此模型或用户需要先执行：
 
 ```bash
-git rm --cached --ignore-unmatch -- '.env*'
+git add <files>
 ```
 
----
+之后再调用：
 
-## 11. 安装
+```text
+git_commit
+```
 
-安装依赖：
+## MCP 架构
+
+MCP 相关代码位于：
+
+```text
+src/tools/mcp/
+```
+
+### `McpToolProvider`
+
+所有 MCP Server 都可以通过统一接口接入：
+
+```ts
+interface McpToolProvider {
+  getToolDefinitions(): ToolDefinition[];
+  execute(name: string, args: ToolArguments): Promise<string>;
+  close(): Promise<void>;
+}
+```
+
+这个接口隔离了 MCP Server 的具体连接方式。Provider 可以使用：
+
+- Streamable HTTP
+- stdio
+- 其他 MCP SDK 支持的 transport
+
+### `McpClientManager`
+
+`McpClientManager` 管理多个 MCP Server：
+
+```ts
+mcpManager.registerServer({
+  name: "github",
+  provider: githubMcp,
+});
+```
+
+它负责：
+
+- 保存 Server 名称和 Provider 的关系。
+- 收集每个 Server 的工具定义。
+- 将工具名称映射到对应 Provider。
+- 转发工具调用。
+- 在 CLI 退出时关闭所有 MCP 连接。
+- 拒绝重复的 Server 名称和工具名称。
+
+未来接入 Database MCP 时，目标结构为：
+
+```ts
+mcpManager.registerServer({
+  name: "database",
+  provider: databaseMcp,
+});
+```
+
+## GitHub MCP
+
+当前已实现 GitHub MCP Client，支持两种连接方式：
+
+1. GitHub 官方远程 Streamable HTTP。
+2. 本地命令启动的 stdio MCP Server，例如 Docker。
+
+GitHub MCP 的远程工具会加上 `mcp_github_` 前缀，避免和 Native Tool 重名。
+
+例如远程工具：
+
+```text
+get_file_contents
+```
+
+在 Mini Codex 中会暴露为：
+
+```text
+mcp_github_get_file_contents
+```
+
+### 远程 HTTP 模式
+
+GitHub 官方远程 MCP 地址：
+
+```text
+https://api.githubcopilot.com/mcp/
+```
+
+在当前 provider 对应的 `.env.<provider>` 中加入：
+
+```env
+MCP_GITHUB_ENABLED=true
+MCP_GITHUB_TRANSPORT=http
+MCP_GITHUB_URL=https://api.githubcopilot.com/mcp/
+GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_your_token
+```
+
+启动：
 
 ```bash
-pnpm install
+pnpm dev -- openai-compatible
 ```
 
-或者：
+启动过程：
 
-```bash
-npm install
+```text
+读取 .env.openai-compatible
+        |
+        v
+创建 GitHubMcpClient
+        |
+        v
+连接 GitHub MCP HTTP Server
+        |
+        v
+调用 tools/list
+        |
+        v
+转换为 mcp_github_* ToolDefinition
+        |
+        v
+注册到 McpClientManager
 ```
 
----
+### Docker stdio 模式
 
-## 12. 开发运行
+GitHub 官方 MCP Server 也可以通过 Docker 启动：
 
-开发模式：
+```env
+MCP_GITHUB_ENABLED=true
+MCP_GITHUB_TRANSPORT=stdio
+MCP_GITHUB_COMMAND=docker
+MCP_GITHUB_ARGS=["run","-i","--rm","-e","GITHUB_PERSONAL_ACCESS_TOKEN","ghcr.io/github/github-mcp-server"]
+GITHUB_PERSONAL_ACCESS_TOKEN=github_pat_your_token
+```
+
+要求：
+
+- Docker 已安装。
+- Docker daemon 正在运行。
+- 可以拉取或已经拥有 `ghcr.io/github/github-mcp-server` 镜像。
+- `MCP_GITHUB_ARGS` 是合法的 JSON 字符串数组。
+
+Mini Codex 会启动 Docker 子进程，通过 stdio 与 GitHub MCP Server 通信。退出 CLI 时会关闭 MCP Client。
+
+### GitHub MCP 环境变量
+
+| 变量 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `MCP_GITHUB_ENABLED` | 是 | `false` | 必须为 `true` 才启用 GitHub MCP |
+| `MCP_GITHUB_TRANSPORT` | 否 | `http` | 支持 `http` 或 `stdio` |
+| `MCP_GITHUB_URL` | 否 | `https://api.githubcopilot.com/mcp/` | HTTP MCP Server 地址 |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | HTTP 必填 | 无 | 以 Bearer Token 方式发送 |
+| `MCP_GITHUB_COMMAND` | stdio 必填 | 无 | MCP Server 启动命令，例如 `docker` |
+| `MCP_GITHUB_ARGS` | 否 | 无 | 启动参数，必须是 JSON 字符串数组 |
+| `MCP_GITHUB_CWD` | 否 | 当前进程目录 | stdio Server 工作目录 |
+
+当前代码只会在 `MCP_GITHUB_ENABLED=true` 时初始化 GitHub MCP。没有启用 MCP 时，Native Tools 可以单独运行。
+
+### Token 安全建议
+
+- 不要把真实 GitHub Token 提交到 Git。
+- 使用权限尽可能小的 GitHub Token。
+- 不要在 README、代码或日志中打印 Token。
+- HTTP 和 stdio 模式都通过环境变量传递 Token。
+- 如果 Token 泄漏，应立即在 GitHub 中撤销并重新生成。
+
+## Git 自动保护
+
+如果 `workspace/` 位于 Git 仓库中，Agent 会在每次任务开始时尝试创建自动 checkpoint。
+
+每批工具执行后，Agent 会检查 checkpoint 之后的变化，并将检查结果写入后续上下文，使模型可以看到自己刚才造成的修改。
+
+### 正常完成
+
+```text
+任务开始
+  -> 创建自动 checkpoint
+  -> 执行工具
+  -> 检查变化
+  -> 返回最终答案
+  -> 释放 checkpoint
+```
+
+### 异常完成
+
+以下情况会触发自动 rollback：
+
+- 模型请求失败。
+- 工具执行抛出异常。
+- Agent 超过最大迭代次数。
+
+```text
+任务开始
+  -> 创建自动 checkpoint
+  -> 执行工具
+  -> 发生异常
+  -> rollback 到任务开始前
+```
+
+任务开始前已经存在的 staged、unstaged 和 untracked 文件会被保留。Git checkpoint 不可用时，Agent 会记录警告并继续执行，但不会获得自动回滚保护。
+
+## 开发和运行
+
+### 开发模式
+
+默认使用 `openai`：
 
 ```bash
 pnpm dev
 ```
 
-或者：
+指定 provider：
 
 ```bash
-npm run dev
+pnpm dev -- openai-compatible
+pnpm dev -- anthropic
+pnpm dev -- gemini
 ```
 
-启动后：
+### CLI
+
+启动后会看到：
 
 ```text
 =================================
        Mini Codex Agent
 =================================
 
-Agent 已启动，可以开始提问。
-输入 exit、quit 或 q 退出。
-Workspace: D:\mini-codex\workspace
-
 You:
 ```
 
----
+输入自然语言任务，例如：
 
-## 13. TypeScript 类型检查
+```text
+You: 列出当前工作区的文件
+You: 找出所有使用 fetch 的 TypeScript 文件
+You: 创建一个 hello.ts 文件
+You: 检查当前 Git 修改
+You: 查看 GitHub 仓库最近的 issue
+```
 
-推荐开发过程中首先运行：
+输入以下任意命令退出：
+
+```text
+exit
+quit
+q
+```
+
+## 类型检查、构建和打包
+
+### 类型检查
 
 ```bash
 pnpm typecheck
 ```
 
-或者：
+执行 `tsc --noEmit`，不会生成编译产物。
 
-```bash
-npm run typecheck
-```
-
-用于检查 TypeScript 类型错误。
-
----
-
-## 14. 构建
+### TypeScript 构建
 
 ```bash
 pnpm build
 ```
 
-或者：
-
-```bash
-npm run build
-```
-
-构建后：
+输出到：
 
 ```text
 dist/
 ```
 
----
+### 清理并重新构建
 
-## 15. 生产运行
+```bash
+pnpm rebuild
+```
+
+该命令依次执行：
+
+```text
+pnpm clean
+pnpm build
+```
+
+### 生产模式运行
 
 ```bash
 pnpm start
 ```
 
-或者：
+等价于：
 
 ```bash
-npm start
+node dist/index.js
 ```
 
----
-
-### 生成 Windows exe
-
-先安装打包器：
+运行生产构建时仍然需要从命令行指定 provider，例如：
 
 ```bash
-pnpm add -D @yao-pkg/pkg
+node dist/index.js openai-compatible
 ```
 
-然后生成：
+### Node.js Bundle
+
+```bash
+pnpm bundle
+```
+
+输出：
+
+```text
+dist/bundle.cjs
+```
+
+### Windows exe
 
 ```bash
 pnpm build:exe
 ```
 
-产物会在 `release/mini-codex.exe`。
-
-运行时请把 `workspace/` 和对应的 `.env.<provider>` 放在 exe 同级目录。
-
-## 16. 示例
-
-启动：
+该命令会依次执行：
 
 ```text
-You: 列出当前工作区的文件
+pnpm build
+pnpm bundle
+pnpm exec pkg dist/bundle.cjs --targets node22-win-x64
 ```
 
-Agent：
+输出：
 
 ```text
-[Agent] iteration: 1
-[Agent] tool: list_files
-[Agent] arguments: {"path":"."}
+release/mini-codex.exe
 ```
 
-Tool 返回文件列表后，Agent 继续处理。
-
----
-
-### 创建文件
+exe 同级目录需要准备：
 
 ```text
-You: 创建一个 hello.ts，内容是 console.log("Hello Mini Codex")
-```
-
-Agent 会：
-
-```text
-LLM
- ↓
-write_file
- ↓
-Workspace.resolve()
- ↓
-workspace/hello.ts
- ↓
-Tool Result
- ↓
-LLM
- ↓
-Final Answer
-```
-
----
-
-### 修改文件
-
-```text
-You: 把 hello.ts 里的 Hello Mini Codex 修改成 Hello World
-```
-
-Agent 会：
-
-```text
-read_file
-   ↓
-分析文件
-   ↓
-edit_file
-   ↓
-Tool Result
-   ↓
-Final Answer
-```
-
----
-
-### 执行命令
-
-```text
-You: 执行 node -v
-```
-
-Agent：
-
-```text
-run_command
-```
-
-命令执行目录：
-
-```text
+mini-codex.exe
 workspace/
+.env.openai-compatible
 ```
 
----
+如果启用 GitHub MCP，`.env.openai-compatible` 中还需要包含对应的 MCP 配置。
 
-## 17. 安全设计
-
-目前主要通过 Workspace 实现文件访问隔离。
-
-### 路径隔离
-
-允许：
+## 项目结构
 
 ```text
-workspace/src/index.ts
+mini-codex/
+├── src/
+│   ├── agent/
+│   │   ├── agent.ts          # Agent 主循环、Tool Call 执行和 Git 自动保护
+│   │   ├── context.ts        # 对话上下文和 Function Call 结果
+│   │   └── prompt.ts         # Agent 系统提示词
+│   ├── llm/
+│   │   ├── types.ts          # ModelClient、ToolDefinition 等类型
+│   │   ├── openai.ts         # OpenAI Responses API Client
+│   │   ├── anthropic.ts      # Anthropic Messages API Client
+│   │   └── gemini.ts         # OpenAI Chat Completions 兼容 Client
+│   ├── tools/
+│   │   ├── registry.ts       # ToolRegistry，统一工具注册和执行
+│   │   ├── native/
+│   │   │   ├── index.ts      # Native Tools 导出入口
+│   │   │   ├── native.ts     # File/Git/Shell 工具分类和组装
+│   │   │   ├── tool.ts       # Native Tool Definition 和函数注册
+│   │   │   ├── listFiles.ts  # 文件工具
+│   │   │   ├── readFile.ts
+│   │   │   ├── writeFile.ts
+│   │   │   ├── editFile.ts
+│   │   │   ├── deleteFile.ts
+│   │   │   ├── searchFiles.ts
+│   │   │   ├── runCommand.ts # Shell 工具
+│   │   │   ├── git*.ts       # Git 工具和 checkpoint 实现
+│   │   │   └── ...
+│   │   └── mcp/
+│   │       ├── index.ts      # MCP 导出入口
+│   │       ├── types.ts      # McpToolProvider 接口
+│   │       ├── manager.ts    # McpClientManager
+│   │       └── github.ts     # GitHub MCP HTTP/stdio Client
+│   ├── workspace/
+│   │   └── workspace.ts      # 路径解析和工作区隔离
+│   ├── config.ts             # provider 和环境变量加载
+│   └── index.ts              # CLI 入口和依赖组装
+├── workspace/                # Agent 默认工作目录
+├── package.json
+├── pnpm-lock.yaml
+├── tsconfig.json
+└── README.md
 ```
 
-拒绝：
+## 扩展 Native Tool
+
+新增本地工具通常需要以下步骤：
+
+1. 在 `src/tools/native/` 下创建工具实现文件。
+2. 在 `src/tools/native/tool.ts` 的 `createToolRegistry()` 中注册执行函数。
+3. 在 `toolDefinitions` 中添加对应的 JSON Schema。
+4. 在 `src/tools/native/native.ts` 中把工具加入 File、Git 或 Shell 分类。
+5. 运行类型检查和构建。
+
+示例结构：
+
+```ts
+export const myTool = async (
+  args: ToolArguments,
+): Promise<string> => {
+  return JSON.stringify({
+    success: true,
+    value: args,
+  });
+};
+```
+
+工具名称必须全局唯一，否则 `ToolRegistry` 会拒绝注册。
+
+## 扩展 MCP Server
+
+新增 MCP Server 时，实现 `McpToolProvider`：
+
+```ts
+import type { ToolArguments } from "../../agent/agent.js";
+import type { ToolDefinition } from "../../llm/types.js";
+import type { McpToolProvider } from "./types.js";
+
+export class DatabaseMcpClient implements McpToolProvider {
+  getToolDefinitions(): ToolDefinition[] {
+    return [];
+  }
+
+  async execute(
+    name: string,
+    args: ToolArguments,
+  ): Promise<string> {
+    return JSON.stringify({
+      success: true,
+      name,
+      args,
+    });
+  }
+
+  async close(): Promise<void> {}
+}
+```
+
+然后在 `src/index.ts` 中注册：
+
+```ts
+const databaseMcp = new DatabaseMcpClient();
+
+mcpManager.registerServer({
+  name: "database",
+  provider: databaseMcp,
+});
+```
+
+注意：
+
+- MCP 工具名称必须避免和 Native Tool 重名。
+- 推荐给不同 MCP Server 的工具加前缀，例如 `mcp_database_`。
+- Provider 的 `close()` 必须释放网络连接、子进程或其他资源。
+- 外部 MCP Tool 的参数 Schema 必须准确，否则模型可能生成无效参数。
+
+## 安全边界
+
+- 文件工具通过 `Workspace.resolve()` 限制相对路径。
+- `run_command` 的当前工作目录固定为 `workspace/`。
+- 工作目录限制不等于完整的 Shell 沙箱；命令仍可能通过绝对路径访问工作区外资源。
+- `git_commit` 只提交 staged 内容，不会自动暂存全部修改。
+- GitHub MCP 权限取决于 GitHub Token 的权限范围。
+- MCP Server 可以拥有独立于本地文件工具的访问能力，启用前应检查 Server 来源和权限。
+- 不要提交 `.env*` 文件、API Key 或 GitHub Token。
+
+## 常见问题
+
+### 启动时报 `.env.<provider>` 不存在
+
+确认命令中的 provider 和环境文件名称一致：
+
+```bash
+pnpm dev -- openai-compatible
+```
+
+对应文件必须是：
 
 ```text
-../package.json
-../../secret.txt
+.env.openai-compatible
 ```
 
-### 编辑保护
+### 报 `MODEL_BASE_URL` 缺失
 
-`edit_file` 要求 `oldText` 唯一匹配。
+当前配置加载逻辑将 `MODEL_BASE_URL` 视为必填变量，请在对应的 `.env.<provider>` 中填写。
 
-如果：
+### GitHub MCP 没有启动
+
+确认：
+
+```env
+MCP_GITHUB_ENABLED=true
+```
+
+并检查：
+
+- HTTP 模式是否设置 `GITHUB_PERSONAL_ACCESS_TOKEN`。
+- stdio 模式是否设置 `MCP_GITHUB_COMMAND`。
+- `MCP_GITHUB_ARGS` 是否是合法 JSON 数组。
+- Docker 是否正在运行。
+
+### GitHub MCP 工具没有出现在模型工具列表
+
+GitHub MCP 工具只有在启动时连接成功并完成 `tools/list` 后才会注册。查看启动日志中是否出现：
 
 ```text
-oldText
+[MCP] GitHub connected: <number> tools available.
 ```
 
-出现多次，则拒绝修改。
+### `edit_file` 拒绝修改
 
-### 命令执行
+读取目标文件，确认 `oldText` 在文件中只出现一次。出现多次时，应缩小匹配文本或改用更具体的上下文。
 
-命令执行目前限制在：
+## 许可证
 
-```text
-workspace/
-```
-
-作为工作目录。
-
-> 注意：`run_command` 目前只是限制命令的工作目录，并不能阻止 Shell 命令本身访问 Workspace 外部资源。例如 Windows 下的命令仍然可能通过绝对路径访问其他目录。因此 `run_command` 当前不应被视为完整的操作系统级沙箱。
-
----
-
-## 18. 当前版本能力
-
-目前已经形成一个最小可运行的 Coding Agent：
-
-```text
-                 Mini Codex
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-        Agent                 Tools
-          │                     │
-          │          ┌──────────┼───────────┐
-          │          │          │           │
-          ▼          ▼          ▼           ▼
-        LLM       文件读取    文件修改     命令执行
-          │          │          │           │
-          └──────────┴──────────┴───────────┘
-                     │
-                  Workspace
-                     │
-                     ▼
-                 File System
-```
-
-已经具备 Coding Agent 最核心的：
-
-```text
-理解任务
-   ↓
-规划
-   ↓
-调用 Tool
-   ↓
-读取结果
-   ↓
-继续调用 Tool
-   ↓
-完成任务
-```
-
----
-
-## 19. 后续可以继续扩展
-
-在当前架构基础上，可以继续增加：
-
-### Agent 能力
-
-* Streaming 输出
-* Tool Call 并行执行
-* Context 压缩
-* Token 管理
-* 自动重试
-* 最大执行时间
-* Agent 状态事件
-* Tool 执行日志
-
-### Coding Agent 能力
-
-* patch Tool
-* 自动测试
-* 自动修复 TypeScript 错误
-* 自动运行 lint
-* 自动运行 build
-* 项目结构分析
-* 代码搜索优化
-
-### 安全能力
-
-* Tool 权限控制
-* 命令执行确认
-* 危险命令拦截
-* 文件修改确认
-* 更严格的命令沙箱
-* Workspace 权限策略
-
----
-
-## 20. 项目目标
-
-Mini Codex 的核心并不是简单地实现一个聊天机器人，而是构建一个最小化的 **AI Coding Agent Runtime**。
-
-核心模型：
-
-```text
-LLM
- +
-Context
- +
-Tool Calling
- +
-Workspace
- +
-Tool Executor
- =
-Coding Agent
-```
-
-通过不断扩展 Tool 和 Agent Runtime，可以逐步实现类似 Codex / Claude Code 的开发者 Agent 工作流。
+项目当前使用 ISC License，具体以 `package.json` 为准。
