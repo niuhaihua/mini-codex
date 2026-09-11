@@ -139,10 +139,10 @@ export class OpenAIModel
         request,
       );
 
-    console.log(
-      "[OpenAI] response received",
-      response
-    );
+    // console.log(
+    //   "[OpenAI] response received",
+    //   response
+    // );
 
     console.log(
       "[OpenAI] output items:",
