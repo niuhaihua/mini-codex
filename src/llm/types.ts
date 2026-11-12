@@ -105,5 +105,7 @@ export interface ModelClient {
     messages: ContextItem[];
 
     tools?: ToolDefinition[];
+
+    onToken?: (token: string) => void;
   }): Promise<ModelResponse>;
 }

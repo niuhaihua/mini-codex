@@ -46,6 +46,8 @@ export interface AgentOptions {
   maxIterations?: number;
 
   systemPrompt?: string;
+
+  onToken?: (token: string) => void;
 }
 
 /**
@@ -63,6 +65,10 @@ export class Agent {
   private readonly maxIterations: number;
 
   private readonly systemPrompt: string;
+
+  private readonly onToken:
+    | ((token: string) => void)
+    | undefined;
 
   private context: AgentContext;
 
@@ -84,6 +90,8 @@ export class Agent {
     this.systemPrompt =
       options.systemPrompt ??
       getSystemPrompt();
+
+    this.onToken = options.onToken;
 
     this.context =
       new AgentContext(
@@ -116,12 +124,30 @@ export class Agent {
           }/${this.maxIterations}`
         );
 
+        let streamedText = "";
         const response =
           await this.model.chat({
             messages:
               this.context.getItems(),
             tools: this.tools,
+            ...(this.onToken
+              ? {
+                  onToken: (token: string) => {
+                    if (!token) return;
+                    streamedText += token;
+                    this.onToken?.(token);
+                  },
+                }
+              : {}),
           });
+
+        response.content ||= streamedText || null;
+        // Some providers only include text in the final event. Reconcile each
+        // iteration so an earlier tool preamble cannot hide the final answer.
+        if (this.onToken && response.content?.startsWith(streamedText)) {
+          const remaining = response.content.slice(streamedText.length);
+          if (remaining) this.onToken(remaining);
+        }
 
         /**
          * 保存 Assistant 文本
@@ -134,10 +160,12 @@ export class Agent {
             response.content
           );
 
-          console.log(
-            "[Agent] assistant:",
-            response.content
-          );
+          if (!this.onToken) {
+            console.log(
+              "[Agent] assistant:",
+              response.content
+            );
+          }
         }
 
         /**
@@ -147,6 +175,9 @@ export class Agent {
           response.functionCalls.length ===
           0
         ) {
+          if (!response.content?.trim()) {
+            throw new Error("模型未返回文本或工具调用，请检查模型服务的流式响应。");
+          }
           await this.checkGitChanges(false);
           await this.discardAutomaticCheckpoint();
           return response.content ?? "";

@@ -3,3 +3,5 @@ dist
 release
 workspace
 .env*
+.vscode
+tests

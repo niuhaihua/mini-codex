@@ -105,11 +105,18 @@ async function main(): Promise<void> {
   /**
    * Agent
    */
+  let activeTokenHandler:
+    | ((token: string) => void)
+    | undefined;
+
   const agent =
     new Agent({
       model,
       tools: toolRegistry.getDefinitions(),
       toolExecutor: toolRegistry,
+      onToken: (token) => {
+        activeTokenHandler?.(token);
+      },
     });
 
   /**
@@ -175,21 +182,52 @@ async function main(): Promise<void> {
       }
 
       try {
+        let didStream = false;
+        let pendingWhitespace = "";
+
+        activeTokenHandler = (token) => {
+          if (!token) return;
+          if (!didStream) {
+            pendingWhitespace += token;
+            if (!pendingWhitespace.trim()) return;
+            console.log(
+              "\nAgent:"
+            );
+            didStream = true;
+            output.write(pendingWhitespace);
+            pendingWhitespace = "";
+            return;
+          }
+
+          output.write(token);
+        };
+
         const result =
           await agent.run(
             question
           );
 
-        console.log(
-          "\nAgent:"
-        );
+        activeTokenHandler =
+          undefined;
 
-        console.log(result);
+        if (didStream) {
+          console.log();
+          console.log();
+        } else {
+          console.log(
+            "\nAgent:"
+          );
 
-        console.log();
+          console.log(result);
+
+          console.log();
+        }
       } catch (
         error: unknown
       ) {
+        activeTokenHandler =
+          undefined;
+
         console.error(
           "\n执行任务时发生错误："
         );
